@@ -7,7 +7,8 @@ import { Layout } from "@/components/layout/Layout";
 import { OverviewPage } from "@/pages/overview";
 import { ChannelPage } from "@/pages/channel";
 import { SettingsPage } from "@/pages/settings";
-import { useEffect } from "react";
+import { LockScreen } from "@/pages/lock-screen";
+import { useEffect, useState } from "react";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -18,7 +19,6 @@ const queryClient = new QueryClient({
   },
 });
 
-// Enforce dark mode default initially
 function DarkModeEnforcer() {
   useEffect(() => {
     document.documentElement.classList.add("dark");
@@ -41,13 +41,21 @@ function Router() {
 }
 
 function App() {
+  const [unlocked, setUnlocked] = useState(
+    () => sessionStorage.getItem("yt_access") === "1"
+  );
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <DarkModeEnforcer />
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <Router />
-        </WouterRouter>
+        {unlocked ? (
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+            <Router />
+          </WouterRouter>
+        ) : (
+          <LockScreen onUnlock={() => setUnlocked(true)} />
+        )}
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>
