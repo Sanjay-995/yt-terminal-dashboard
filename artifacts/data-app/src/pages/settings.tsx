@@ -9,11 +9,10 @@ import {
   getGetChannelsQueryKey,
 } from "@workspace/api-client-react";
 import type { ChannelSummary, CreateChannelRequest } from "@workspace/api-client-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -22,7 +21,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Pencil, Trash2, Plus, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
+import { Pencil, Trash2, Plus, ExternalLink, CheckCircle2, XCircle, RefreshCw, Zap } from "lucide-react";
 
 const PRESET_COLORS = [
   "#FF0000", "#FFC107", "#E91E63", "#4CAF50", "#9C27B0",
@@ -42,7 +41,7 @@ const PLATFORM_ICONS: Record<string, string> = {
 
 function PlatformBadge({ platformId, platforms }: { platformId: string; platforms: { id: string; name: string; color: string }[] }) {
   const platform = platforms.find((p) => p.id === platformId);
-  if (!platform) return <span className="text-xs text-muted-foreground">{platformId}</span>;
+  if (!platform) return <span className="text-xs text-muted-foreground capitalize">{platformId}</span>;
   return (
     <span
       className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
@@ -89,6 +88,20 @@ function channelToForm(ch: ChannelSummary): ChannelFormData {
   };
 }
 
+interface ZernioAccount {
+  id: string;
+  name: string;
+  handle: string;
+  platform: string;
+  url: string;
+  avatarColor: string;
+  profilePicture: string | null;
+  subscribers: number;
+  totalViews: number;
+  totalVideos: number;
+  zernioId: string;
+}
+
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const channelsQuery = useGetChannels();
@@ -97,12 +110,19 @@ export function SettingsPage() {
   const updateMutation = useUpdateChannel();
   const deleteMutation = useDeleteChannel();
 
-  const [tab, setTab] = useState<"channels" | "platforms">("channels");
+  const [tab, setTab] = useState<"channels" | "platforms" | "zernio">("channels");
   const [addOpen, setAddOpen] = useState(false);
   const [editChannel, setEditChannel] = useState<ChannelSummary | null>(null);
   const [deleteChannel, setDeleteChannelState] = useState<ChannelSummary | null>(null);
   const [form, setForm] = useState<ChannelFormData>(emptyForm);
   const [formError, setFormError] = useState("");
+
+  // Zernio sync state
+  const [zernioAccounts, setZernioAccounts] = useState<ZernioAccount[] | null>(null);
+  const [zernioLoading, setZernioLoading] = useState(false);
+  const [zernioError, setZernioError] = useState("");
+  const [syncing, setSyncing] = useState<Set<string>>(new Set());
+  const [synced, setSynced] = useState<Set<string>>(new Set());
 
   const platforms = platformsQuery.data ?? [];
   const channels = channelsQuery.data ?? [];
@@ -145,8 +165,9 @@ export function SettingsPage() {
       await createMutation.mutateAsync({ data: buildPayload(form) });
       queryClient.invalidateQueries({ queryKey: getGetChannelsQueryKey() });
       setAddOpen(false);
-    } catch (e: any) {
-      setFormError(e?.response?.data?.error ?? e?.message ?? "Failed to create channel");
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } }; message?: string };
+      setFormError(err?.response?.data?.error ?? err?.message ?? "Failed to create channel");
     }
   }
 
@@ -158,8 +179,9 @@ export function SettingsPage() {
       await updateMutation.mutateAsync({ channelId: editChannel.id, data: buildPayload(form) });
       queryClient.invalidateQueries({ queryKey: getGetChannelsQueryKey() });
       setEditChannel(null);
-    } catch (e: any) {
-      setFormError(e?.response?.data?.error ?? e?.message ?? "Failed to update channel");
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } }; message?: string };
+      setFormError(err?.response?.data?.error ?? err?.message ?? "Failed to update channel");
     }
   }
 
@@ -169,8 +191,67 @@ export function SettingsPage() {
       await deleteMutation.mutateAsync({ channelId: deleteChannel.id });
       queryClient.invalidateQueries({ queryKey: getGetChannelsQueryKey() });
       setDeleteChannelState(null);
-    } catch (e: any) {
+    } catch {
       setDeleteChannelState(null);
+    }
+  }
+
+  async function loadZernioAccounts() {
+    setZernioLoading(true);
+    setZernioError("");
+    try {
+      const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const res = await fetch(`${base}/api/zernio/accounts`);
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(j.error ?? `HTTP ${res.status}`);
+      }
+      const data = await res.json() as ZernioAccount[];
+      setZernioAccounts(data);
+      // Mark already-imported ones
+      const existingZernioIds = new Set(
+        channels
+          .filter((c) => c.id.startsWith("zernio_"))
+          .map((c) => c.id)
+      );
+      setSynced(existingZernioIds);
+    } catch (e: unknown) {
+      const err = e as { message?: string };
+      setZernioError(err.message ?? "Failed to load Zernio accounts");
+    } finally {
+      setZernioLoading(false);
+    }
+  }
+
+  async function importZernioAccount(account: ZernioAccount) {
+    setSyncing((s) => new Set(s).add(account.id));
+    try {
+      await createMutation.mutateAsync({
+        data: {
+          name: account.name,
+          handle: account.handle,
+          platform: account.platform,
+          avatarColor: account.avatarColor,
+          url: account.url || undefined,
+          subscribers: account.subscribers,
+          totalViews: account.totalViews,
+          totalVideos: account.totalVideos,
+        },
+      });
+      queryClient.invalidateQueries({ queryKey: getGetChannelsQueryKey() });
+      setSynced((s) => new Set(s).add(account.id));
+    } catch {
+      // silently ignore
+    } finally {
+      setSyncing((s) => { const n = new Set(s); n.delete(account.id); return n; });
+    }
+  }
+
+  async function importAll() {
+    if (!zernioAccounts) return;
+    const toImport = zernioAccounts.filter((a) => !synced.has(a.id));
+    for (const account of toImport) {
+      await importZernioAccount(account);
     }
   }
 
@@ -188,13 +269,17 @@ export function SettingsPage() {
 
         {/* Tabs */}
         <div className="flex gap-1 bg-muted p-1 rounded-md border border-border w-fit">
-          {(["channels", "platforms"] as const).map((t) => (
+          {(["channels", "zernio", "platforms"] as const).map((t) => (
             <button
               key={t}
-              className={`text-sm px-4 py-1.5 rounded-sm capitalize transition-colors ${tab === t ? "bg-background shadow-sm font-medium text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-              onClick={() => setTab(t)}
+              className={`text-sm px-4 py-1.5 rounded-sm capitalize transition-colors flex items-center gap-1.5 ${tab === t ? "bg-background shadow-sm font-medium text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              onClick={() => {
+                setTab(t);
+                if (t === "zernio" && !zernioAccounts && !zernioLoading) loadZernioAccounts();
+              }}
             >
-              {t}
+              {t === "zernio" && <Zap className="w-3 h-3" />}
+              {t === "zernio" ? "Zernio Sync" : t}
             </button>
           ))}
         </div>
@@ -212,7 +297,7 @@ export function SettingsPage() {
               </Button>
             </div>
 
-            <Card className="shadcn-card bg-card">
+            <Card className="bg-card">
               <CardContent className="p-0">
                 {channelsQuery.isLoading ? (
                   <div className="p-4 space-y-3">
@@ -220,7 +305,7 @@ export function SettingsPage() {
                   </div>
                 ) : channels.length === 0 ? (
                   <div className="py-16 text-center text-muted-foreground text-sm">
-                    No channels yet. Add your first channel to get started.
+                    No channels yet. Add your first channel or sync from Zernio.
                   </div>
                 ) : (
                   <div className="divide-y divide-border">
@@ -240,21 +325,16 @@ export function SettingsPage() {
                           <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                             <span className="text-xs text-muted-foreground font-mono">{ch.handle}</span>
                             {ch.url && (
-                              <a
-                                href={ch.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-xs text-primary flex items-center gap-0.5 hover:underline"
-                              >
-                                <ExternalLink className="w-3 h-3" />
-                                Visit
+                              <a href={ch.url} target="_blank" rel="noopener noreferrer"
+                                className="text-xs text-primary flex items-center gap-0.5 hover:underline">
+                                <ExternalLink className="w-3 h-3" />Visit
                               </a>
                             )}
                           </div>
                         </div>
                         <div className="hidden sm:flex items-center gap-4 text-right shrink-0">
                           <div>
-                            <div className="text-xs text-muted-foreground">Subscribers</div>
+                            <div className="text-xs text-muted-foreground">Followers</div>
                             <div className="text-sm font-mono font-semibold">{ch.subscribers.toLocaleString()}</div>
                           </div>
                           <div>
@@ -263,18 +343,12 @@ export function SettingsPage() {
                           </div>
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            onClick={() => openEdit(ch)}
-                            className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                            aria-label="Edit channel"
-                          >
+                          <button onClick={() => openEdit(ch)}
+                            className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
-                          <button
-                            onClick={() => setDeleteChannelState(ch)}
-                            className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                            aria-label="Delete channel"
-                          >
+                          <button onClick={() => setDeleteChannelState(ch)}
+                            className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
@@ -287,16 +361,124 @@ export function SettingsPage() {
           </div>
         )}
 
+        {/* Zernio Sync Tab */}
+        {tab === "zernio" && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">
+                  Import your connected Zernio accounts directly into the dashboard.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {zernioAccounts && zernioAccounts.some((a) => !synced.has(a.id)) && (
+                  <Button size="sm" variant="outline" onClick={importAll} className="h-8 text-xs gap-1.5">
+                    <Zap className="w-3.5 h-3.5" />
+                    Import All
+                  </Button>
+                )}
+                <Button size="sm" onClick={loadZernioAccounts} disabled={zernioLoading} className="h-8 text-xs gap-1.5">
+                  <RefreshCw className={`w-3.5 h-3.5 ${zernioLoading ? "animate-spin" : ""}`} />
+                  {zernioLoading ? "Loading..." : "Refresh"}
+                </Button>
+              </div>
+            </div>
+
+            {zernioError && (
+              <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 px-4 py-3 rounded-lg">
+                {zernioError}
+              </div>
+            )}
+
+            <Card className="bg-card">
+              <CardContent className="p-0">
+                {zernioLoading ? (
+                  <div className="p-4 space-y-3">
+                    {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
+                  </div>
+                ) : !zernioAccounts ? (
+                  <div className="py-16 text-center text-muted-foreground text-sm">
+                    Click Refresh to load your Zernio accounts.
+                  </div>
+                ) : zernioAccounts.length === 0 ? (
+                  <div className="py-16 text-center text-muted-foreground text-sm">
+                    No accounts connected in Zernio yet.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-border">
+                    {zernioAccounts.map((account) => {
+                      const isImported = synced.has(account.id);
+                      const isSyncingThis = syncing.has(account.id);
+                      return (
+                        <div key={account.id} className="flex items-center gap-4 px-4 py-3.5">
+                          {account.profilePicture ? (
+                            <img
+                              src={account.profilePicture}
+                              alt={account.name}
+                              className="w-10 h-10 rounded-lg object-cover shrink-0"
+                            />
+                          ) : (
+                            <div
+                              className="w-10 h-10 rounded-lg flex items-center justify-center text-base font-bold text-white shrink-0"
+                              style={{ backgroundColor: account.avatarColor }}
+                            >
+                              {account.name.charAt(0)}
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-semibold text-sm text-foreground truncate">{account.name}</span>
+                              <PlatformBadge platformId={account.platform} platforms={platforms} />
+                            </div>
+                            <div className="flex items-center gap-3 mt-0.5">
+                              <span className="text-xs text-muted-foreground font-mono">{account.handle}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {account.subscribers.toLocaleString()} followers
+                              </span>
+                            </div>
+                          </div>
+                          <div className="shrink-0">
+                            {isImported ? (
+                              <span className="flex items-center gap-1 text-xs text-green-500 font-medium">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                Imported
+                              </span>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                disabled={isSyncingThis}
+                                onClick={() => importZernioAccount(account)}
+                              >
+                                {isSyncingThis ? "Importing..." : "Import"}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <p className="text-xs text-muted-foreground">
+              Deep analytics (views, engagement, reach) require the Zernio Analytics add-on. Follower counts are pulled live from your connected accounts.
+            </p>
+          </div>
+        )}
+
         {/* Platforms Tab */}
         {tab === "platforms" && (
           <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">Supported platforms for channel tracking. Each channel you add can be assigned to one of these platforms.</p>
+            <p className="text-sm text-muted-foreground">Supported platforms for channel tracking.</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {platformsQuery.isLoading ? (
                 [...Array(8)].map((_, i) => <Skeleton key={i} className="h-20 w-full" />)
               ) : (
                 platforms.map((platform) => (
-                  <Card key={platform.id} className="shadcn-card bg-card">
+                  <Card key={platform.id} className="bg-card">
                     <CardContent className="p-4">
                       <div className="flex items-center gap-3">
                         <div
@@ -331,15 +513,8 @@ export function SettingsPage() {
       {/* Add Channel Dialog */}
       <Dialog open={addOpen} onOpenChange={(o) => { setAddOpen(o); if (!o) setFormError(""); }}>
         <DialogContent className="sm:max-w-md bg-card border-border">
-          <DialogHeader>
-            <DialogTitle>Add Channel</DialogTitle>
-          </DialogHeader>
-          <ChannelForm
-            form={form}
-            onChange={handleField}
-            platforms={platforms}
-            error={formError}
-          />
+          <DialogHeader><DialogTitle>Add Channel</DialogTitle></DialogHeader>
+          <ChannelForm form={form} onChange={handleField} platforms={platforms} error={formError} />
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => setAddOpen(false)} disabled={isSaving}>Cancel</Button>
             <Button size="sm" onClick={handleAdd} disabled={isSaving}>
@@ -352,15 +527,8 @@ export function SettingsPage() {
       {/* Edit Channel Dialog */}
       <Dialog open={!!editChannel} onOpenChange={(o) => { if (!o) { setEditChannel(null); setFormError(""); } }}>
         <DialogContent className="sm:max-w-md bg-card border-border">
-          <DialogHeader>
-            <DialogTitle>Edit Channel</DialogTitle>
-          </DialogHeader>
-          <ChannelForm
-            form={form}
-            onChange={handleField}
-            platforms={platforms}
-            error={formError}
-          />
+          <DialogHeader><DialogTitle>Edit Channel</DialogTitle></DialogHeader>
+          <ChannelForm form={form} onChange={handleField} platforms={platforms} error={formError} />
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => setEditChannel(null)} disabled={isSaving}>Cancel</Button>
             <Button size="sm" onClick={handleEdit} disabled={isSaving}>
@@ -373,11 +541,9 @@ export function SettingsPage() {
       {/* Delete Confirm Dialog */}
       <Dialog open={!!deleteChannel} onOpenChange={(o) => { if (!o) setDeleteChannelState(null); }}>
         <DialogContent className="sm:max-w-sm bg-card border-border">
-          <DialogHeader>
-            <DialogTitle>Remove Channel</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Remove Channel</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Are you sure you want to remove <span className="font-semibold text-foreground">{deleteChannel?.name}</span> from tracking? This cannot be undone.
+            Are you sure you want to remove <span className="font-semibold text-foreground">{deleteChannel?.name}</span>? This cannot be undone.
           </p>
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => setDeleteChannelState(null)} disabled={deleteMutation.isPending}>Cancel</Button>
@@ -392,10 +558,7 @@ export function SettingsPage() {
 }
 
 function ChannelForm({
-  form,
-  onChange,
-  platforms,
-  error,
+  form, onChange, platforms, error,
 }: {
   form: ChannelFormData;
   onChange: (key: keyof ChannelFormData, value: string) => void;
@@ -410,25 +573,17 @@ function ChannelForm({
         </div>
       )}
 
-      {/* Platform */}
       <div className="space-y-1.5">
         <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Platform</Label>
         <div className="grid grid-cols-4 gap-1.5">
           {platforms.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => onChange("platform", p.id)}
+            <button key={p.id} type="button" onClick={() => onChange("platform", p.id)}
               className={`flex flex-col items-center gap-1 p-2 rounded-md border text-xs font-medium transition-all ${
                 form.platform === p.id
                   ? "border-primary bg-primary/10 text-primary"
                   : "border-border text-muted-foreground hover:border-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <span
-                className="w-6 h-6 rounded flex items-center justify-center text-white text-sm font-bold"
-                style={{ backgroundColor: p.color }}
-              >
+              }`}>
+              <span className="w-6 h-6 rounded flex items-center justify-center text-white text-sm font-bold" style={{ backgroundColor: p.color }}>
                 {PLATFORM_ICONS[p.id] ?? "●"}
               </span>
               <span className="truncate w-full text-center text-[10px]">{p.name}</span>
@@ -440,97 +595,50 @@ function ChannelForm({
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
           <Label htmlFor="ch-name" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Channel Name *</Label>
-          <Input
-            id="ch-name"
-            value={form.name}
-            onChange={(e) => onChange("name", e.target.value)}
-            placeholder="e.g. MKBHD"
-            className="h-8 text-sm bg-muted/30 border-border"
-          />
+          <Input id="ch-name" value={form.name} onChange={(e) => onChange("name", e.target.value)}
+            placeholder="e.g. MKBHD" className="h-8 text-sm bg-muted/30 border-border" />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="ch-handle" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Handle *</Label>
-          <Input
-            id="ch-handle"
-            value={form.handle}
-            onChange={(e) => onChange("handle", e.target.value)}
-            placeholder="@handle"
-            className="h-8 text-sm bg-muted/30 border-border"
-          />
+          <Input id="ch-handle" value={form.handle} onChange={(e) => onChange("handle", e.target.value)}
+            placeholder="@handle" className="h-8 text-sm bg-muted/30 border-border" />
         </div>
       </div>
 
       <div className="space-y-1.5">
         <Label htmlFor="ch-url" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Channel URL</Label>
-        <Input
-          id="ch-url"
-          value={form.url}
-          onChange={(e) => onChange("url", e.target.value)}
-          placeholder="https://youtube.com/@handle"
-          className="h-8 text-sm bg-muted/30 border-border"
-        />
+        <Input id="ch-url" value={form.url} onChange={(e) => onChange("url", e.target.value)}
+          placeholder="https://youtube.com/@handle" className="h-8 text-sm bg-muted/30 border-border" />
       </div>
 
       <div className="grid grid-cols-3 gap-3">
         <div className="space-y-1.5">
-          <Label htmlFor="ch-subs" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Subscribers</Label>
-          <Input
-            id="ch-subs"
-            type="number"
-            min={0}
-            value={form.subscribers}
-            onChange={(e) => onChange("subscribers", e.target.value)}
-            placeholder="0"
-            className="h-8 text-sm bg-muted/30 border-border"
-          />
+          <Label htmlFor="ch-subs" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Followers</Label>
+          <Input id="ch-subs" type="number" min={0} value={form.subscribers}
+            onChange={(e) => onChange("subscribers", e.target.value)} placeholder="0" className="h-8 text-sm bg-muted/30 border-border" />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="ch-views" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total Views</Label>
-          <Input
-            id="ch-views"
-            type="number"
-            min={0}
-            value={form.totalViews}
-            onChange={(e) => onChange("totalViews", e.target.value)}
-            placeholder="0"
-            className="h-8 text-sm bg-muted/30 border-border"
-          />
+          <Input id="ch-views" type="number" min={0} value={form.totalViews}
+            onChange={(e) => onChange("totalViews", e.target.value)} placeholder="0" className="h-8 text-sm bg-muted/30 border-border" />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="ch-videos" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Videos</Label>
-          <Input
-            id="ch-videos"
-            type="number"
-            min={0}
-            value={form.totalVideos}
-            onChange={(e) => onChange("totalVideos", e.target.value)}
-            placeholder="0"
-            className="h-8 text-sm bg-muted/30 border-border"
-          />
+          <Label htmlFor="ch-videos" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Posts</Label>
+          <Input id="ch-videos" type="number" min={0} value={form.totalVideos}
+            onChange={(e) => onChange("totalVideos", e.target.value)} placeholder="0" className="h-8 text-sm bg-muted/30 border-border" />
         </div>
       </div>
 
-      {/* Avatar Color */}
       <div className="space-y-1.5">
         <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Accent Color</Label>
         <div className="flex items-center gap-2 flex-wrap">
           {PRESET_COLORS.map((color) => (
-            <button
-              key={color}
-              type="button"
-              onClick={() => onChange("avatarColor", color)}
+            <button key={color} type="button" onClick={() => onChange("avatarColor", color)}
               className={`w-6 h-6 rounded-full transition-all ${form.avatarColor === color ? "ring-2 ring-offset-1 ring-primary ring-offset-card scale-110" : "hover:scale-110"}`}
-              style={{ backgroundColor: color }}
-              aria-label={color}
-            />
+              style={{ backgroundColor: color }} aria-label={color} />
           ))}
-          <input
-            type="color"
-            value={form.avatarColor}
-            onChange={(e) => onChange("avatarColor", e.target.value)}
-            className="w-6 h-6 rounded-full cursor-pointer border-0 p-0 bg-transparent"
-            title="Custom color"
-          />
+          <input type="color" value={form.avatarColor} onChange={(e) => onChange("avatarColor", e.target.value)}
+            className="w-6 h-6 rounded-full cursor-pointer border-0 p-0 bg-transparent" title="Custom color" />
           <span className="text-xs text-muted-foreground font-mono">{form.avatarColor}</span>
         </div>
       </div>
