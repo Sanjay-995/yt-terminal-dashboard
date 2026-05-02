@@ -45,7 +45,9 @@
     "@tailwindcss/vite": "catalog:",
     "@tanstack/react-query": "catalog:",
     "@types/node": "catalog:",
+    "@types/papaparse": "^5.5.2",
     "@types/react": "catalog:",
+    "@types/react-csv": "^1.1.10",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
     "@workspace/api-client-react": "workspace:*",
@@ -73,5 +75,11 @@
     "vite": "catalog:",
     "wouter": "^3.3.5",
     "zod": "catalog:"
+  },
+  "dependencies": {
+    "@tanstack/react-table": "^8.21.3",
+    "d3-scale-chromatic": "^3.1.0",
+    "papaparse": "^5.5.3",
+    "react-csv": "^2.2.2"
   }
 }

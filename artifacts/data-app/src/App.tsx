@@ -3,26 +3,38 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
+import { Layout } from "@/components/layout/Layout";
+import { OverviewPage } from "@/pages/overview";
+import { ChannelPage } from "@/pages/channel";
+import { useEffect } from "react";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      staleTime: 5 * 60 * 1000,
+    },
+  },
+});
 
-function Home() {
-  return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-gray-50">
-      <div className="text-center">
-        <h1 className="text-2xl font-bold text-gray-900">Replit Agent is building...</h1>
-        <p className="mt-2 text-sm text-gray-600">Your app will appear here once it's ready.</p>
-      </div>
-    </div>
-  );
+// Enforce dark mode default initially
+function DarkModeEnforcer() {
+  useEffect(() => {
+    document.documentElement.classList.add("dark");
+  }, []);
+  return null;
 }
 
 function Router() {
   return (
-    <Switch>
-      <Route path="/" component={Home} />
-      <Route component={NotFound} />
-    </Switch>
+    <Layout>
+      <Switch>
+        <Route path="/" component={OverviewPage} />
+        <Route path="/channels" component={ChannelPage} />
+        <Route path="/channels/:channelId" component={ChannelPage} />
+        <Route component={NotFound} />
+      </Switch>
+    </Layout>
   );
 }
 
@@ -30,6 +42,7 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
+        <DarkModeEnforcer />
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
           <Router />
         </WouterRouter>

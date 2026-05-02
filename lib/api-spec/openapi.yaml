@@ -3,13 +3,17 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: YouTube Analytics Dashboard API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: channels
+    description: YouTube channel analytics
+  - name: overview
+    description: Aggregated dashboard overview
 paths:
   /healthz:
     get:
@@ -24,6 +28,128 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /channels:
+    get:
+      operationId: getChannels
+      tags: [channels]
+      summary: List all tracked channels
+      description: Returns all 5 channels with summary stats
+      responses:
+        "200":
+          description: Channel list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChannelSummary"
+
+  /channels/{channelId}/metrics:
+    get:
+      operationId: getChannelMetrics
+      tags: [channels]
+      summary: Get daily metrics for a channel
+      description: Returns 30 days of daily views, subscribers, watch time, and engagement
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 30
+      responses:
+        "200":
+          description: Daily metrics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DailyMetric"
+        "404":
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /channels/{channelId}/videos:
+    get:
+      operationId: getChannelVideos
+      tags: [channels]
+      summary: Get top videos for a channel
+      description: Returns top videos sorted by views
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Video list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VideoRow"
+        "404":
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /overview:
+    get:
+      operationId: getOverview
+      tags: [overview]
+      summary: Get aggregated overview stats
+      description: Returns KPI totals across all channels for the last 30 days
+      responses:
+        "200":
+          description: Overview stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OverviewStats"
+
+  /overview/trends:
+    get:
+      operationId: getOverviewTrends
+      tags: [overview]
+      summary: Get cross-channel daily trends
+      description: Returns aggregated daily metrics across all channels
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 30
+      responses:
+        "200":
+          description: Daily trend data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TrendPoint"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +160,173 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    ChannelSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        handle:
+          type: string
+        avatarColor:
+          type: string
+        subscribers:
+          type: integer
+        totalViews:
+          type: integer
+        totalVideos:
+          type: integer
+        totalWatchTimeHours:
+          type: number
+        avgViewsPerVideo:
+          type: integer
+        subscriberGrowth30d:
+          type: integer
+        viewsGrowth30d:
+          type: number
+        engagementRate:
+          type: number
+      required:
+        - id
+        - name
+        - handle
+        - avatarColor
+        - subscribers
+        - totalViews
+        - totalVideos
+        - totalWatchTimeHours
+        - avgViewsPerVideo
+        - subscriberGrowth30d
+        - viewsGrowth30d
+        - engagementRate
+
+    DailyMetric:
+      type: object
+      properties:
+        date:
+          type: string
+        views:
+          type: integer
+        subscribers:
+          type: integer
+        watchTimeHours:
+          type: number
+        likes:
+          type: integer
+        comments:
+          type: integer
+        shares:
+          type: integer
+        engagementRate:
+          type: number
+        estimatedRevenue:
+          type: number
+      required:
+        - date
+        - views
+        - subscribers
+        - watchTimeHours
+        - likes
+        - comments
+        - shares
+        - engagementRate
+        - estimatedRevenue
+
+    VideoRow:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        publishedAt:
+          type: string
+        views:
+          type: integer
+        likes:
+          type: integer
+        comments:
+          type: integer
+        watchTimeHours:
+          type: number
+        engagementRate:
+          type: number
+        duration:
+          type: string
+        thumbnailColor:
+          type: string
+      required:
+        - id
+        - title
+        - publishedAt
+        - views
+        - likes
+        - comments
+        - watchTimeHours
+        - engagementRate
+        - duration
+        - thumbnailColor
+
+    OverviewStats:
+      type: object
+      properties:
+        totalSubscribers:
+          type: integer
+        totalViews30d:
+          type: integer
+        totalWatchTimeHours30d:
+          type: number
+        totalEstimatedRevenue30d:
+          type: number
+        avgEngagementRate:
+          type: number
+        subscriberGrowth30d:
+          type: integer
+        viewsGrowth30d:
+          type: number
+        revenueGrowth30d:
+          type: number
+        topChannelByViews:
+          type: string
+        topChannelByGrowth:
+          type: string
+      required:
+        - totalSubscribers
+        - totalViews30d
+        - totalWatchTimeHours30d
+        - totalEstimatedRevenue30d
+        - avgEngagementRate
+        - subscriberGrowth30d
+        - viewsGrowth30d
+        - revenueGrowth30d
+        - topChannelByViews
+        - topChannelByGrowth
+
+    TrendPoint:
+      type: object
+      properties:
+        date:
+          type: string
+        totalViews:
+          type: integer
+        totalSubscribers:
+          type: integer
+        totalWatchTimeHours:
+          type: number
+        totalRevenue:
+          type: number
+      required:
+        - date
+        - totalViews
+        - totalSubscribers
+        - totalWatchTimeHours
+        - totalRevenue
