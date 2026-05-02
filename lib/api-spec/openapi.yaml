@@ -11,9 +11,11 @@ tags:
   - name: health
     description: Health operations
   - name: channels
-    description: YouTube channel analytics
+    description: Channel analytics
   - name: overview
     description: Aggregated dashboard overview
+  - name: platforms
+    description: Supported social platforms
 paths:
   /healthz:
     get:
@@ -29,12 +31,28 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
 
+  /platforms:
+    get:
+      operationId: getPlatforms
+      tags: [platforms]
+      summary: List all supported platforms
+      description: Returns metadata for all platforms that can be tracked
+      responses:
+        "200":
+          description: Platform list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Platform"
+
   /channels:
     get:
       operationId: getChannels
       tags: [channels]
       summary: List all tracked channels
-      description: Returns all 5 channels with summary stats
+      description: Returns all channels with summary stats
       responses:
         "200":
           description: Channel list
@@ -44,13 +62,119 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ChannelSummary"
+    post:
+      operationId: createChannel
+      tags: [channels]
+      summary: Add a new channel to track
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateChannelRequest"
+      responses:
+        "201":
+          description: Channel created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelSummary"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Channel already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /channels/{channelId}:
+    get:
+      operationId: getChannel
+      tags: [channels]
+      summary: Get a single channel
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Channel summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelSummary"
+        "404":
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateChannel
+      tags: [channels]
+      summary: Update a channel
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateChannelRequest"
+      responses:
+        "200":
+          description: Updated channel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelSummary"
+        "404":
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteChannel
+      tags: [channels]
+      summary: Remove a channel from tracking
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Channel deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteChannelResponse"
+        "404":
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /channels/{channelId}/metrics:
     get:
       operationId: getChannelMetrics
       tags: [channels]
       summary: Get daily metrics for a channel
-      description: Returns 30 days of daily views, subscribers, watch time, and engagement
+      description: Returns daily views, subscribers, watch time, and engagement
       parameters:
         - name: channelId
           in: path
@@ -168,6 +292,26 @@ components:
       required:
         - error
 
+    Platform:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        color:
+          type: string
+        supportsAnalytics:
+          type: boolean
+        supportsRevenue:
+          type: boolean
+      required:
+        - id
+        - name
+        - color
+        - supportsAnalytics
+        - supportsRevenue
+
     ChannelSummary:
       type: object
       properties:
@@ -176,6 +320,10 @@ components:
         name:
           type: string
         handle:
+          type: string
+        platform:
+          type: string
+        url:
           type: string
         avatarColor:
           type: string
@@ -199,6 +347,7 @@ components:
         - id
         - name
         - handle
+        - platform
         - avatarColor
         - subscribers
         - totalViews
@@ -208,6 +357,62 @@ components:
         - subscriberGrowth30d
         - viewsGrowth30d
         - engagementRate
+
+    CreateChannelRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        handle:
+          type: string
+        platform:
+          type: string
+        avatarColor:
+          type: string
+        url:
+          type: string
+        subscribers:
+          type: integer
+        totalViews:
+          type: integer
+        totalVideos:
+          type: integer
+      required:
+        - name
+        - handle
+        - platform
+        - avatarColor
+
+    UpdateChannelRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        handle:
+          type: string
+        platform:
+          type: string
+        avatarColor:
+          type: string
+        url:
+          type: string
+        subscribers:
+          type: integer
+        totalViews:
+          type: integer
+        totalVideos:
+          type: integer
+
+    DeleteChannelResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        id:
+          type: string
+      required:
+        - success
+        - id
 
     DailyMetric:
       type: object

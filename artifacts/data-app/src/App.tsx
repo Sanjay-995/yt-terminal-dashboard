@@ -6,6 +6,7 @@ import NotFound from "@/pages/not-found";
 import { Layout } from "@/components/layout/Layout";
 import { OverviewPage } from "@/pages/overview";
 import { ChannelPage } from "@/pages/channel";
+import { SettingsPage } from "@/pages/settings";
 import { useEffect } from "react";
 
 const queryClient = new QueryClient({
@@ -32,6 +33,7 @@ function Router() {
         <Route path="/" component={OverviewPage} />
         <Route path="/channels" component={ChannelPage} />
         <Route path="/channels/:channelId" component={ChannelPage} />
+        <Route path="/settings" component={SettingsPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

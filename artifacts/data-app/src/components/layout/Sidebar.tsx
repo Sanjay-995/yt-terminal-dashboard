@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, RadioReceiver, Activity, Settings } from "lucide-react";
+import { LayoutDashboard, RadioReceiver, Activity, Settings, Plus } from "lucide-react";
 import { useGetChannels } from "@workspace/api-client-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -53,11 +53,14 @@ export function Sidebar() {
         </div>
       </nav>
 
-      <div className="p-4 border-t border-border">
-        <button className="flex items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors w-full rounded-md hover:bg-muted">
+      <div className="p-4 border-t border-border space-y-1">
+        <Link
+          href="/settings"
+          className={`flex items-center gap-2 px-2 py-1.5 text-sm font-medium transition-colors w-full rounded-md ${location === "/settings" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted"}`}
+        >
           <Settings className="w-4 h-4" />
           Settings
-        </button>
+        </Link>
       </div>
     </aside>
   );

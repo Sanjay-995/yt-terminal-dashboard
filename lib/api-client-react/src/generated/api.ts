@@ -5,29 +5,36 @@
  * YouTube Analytics Dashboard API
  * OpenAPI spec version: 0.1.0
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
+  MutationFunction,
   QueryFunction,
   QueryKey,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult,
 } from "@tanstack/react-query";
 
 import type {
   ChannelSummary,
+  CreateChannelRequest,
   DailyMetric,
+  DeleteChannelResponse,
   ErrorResponse,
   GetChannelMetricsParams,
   GetChannelVideosParams,
   GetOverviewTrendsParams,
   HealthStatus,
   OverviewStats,
+  Platform,
   TrendPoint,
+  UpdateChannelRequest,
   VideoRow,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
-import type { ErrorType } from "../custom-fetch";
+import type { ErrorType, BodyType } from "../custom-fetch";
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -112,7 +119,83 @@ export function useHealthCheck<
 }
 
 /**
- * Returns all 5 channels with summary stats
+ * Returns metadata for all platforms that can be tracked
+ * @summary List all supported platforms
+ */
+export const getGetPlatformsUrl = () => {
+  return `/api/platforms`;
+};
+
+export const getPlatforms = async (
+  options?: RequestInit,
+): Promise<Platform[]> => {
+  return customFetch<Platform[]>(getGetPlatformsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetPlatformsQueryKey = () => {
+  return [`/api/platforms`] as const;
+};
+
+export const getGetPlatformsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPlatforms>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getPlatforms>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetPlatformsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getPlatforms>>> = ({
+    signal,
+  }) => getPlatforms({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPlatforms>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPlatformsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPlatforms>>
+>;
+export type GetPlatformsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all supported platforms
+ */
+
+export function useGetPlatforms<
+  TData = Awaited<ReturnType<typeof getPlatforms>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getPlatforms>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPlatformsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns all channels with summary stats
  * @summary List all tracked channels
  */
 export const getGetChannelsUrl = () => {
@@ -188,7 +271,351 @@ export function useGetChannels<
 }
 
 /**
- * Returns 30 days of daily views, subscribers, watch time, and engagement
+ * @summary Add a new channel to track
+ */
+export const getCreateChannelUrl = () => {
+  return `/api/channels`;
+};
+
+export const createChannel = async (
+  createChannelRequest: CreateChannelRequest,
+  options?: RequestInit,
+): Promise<ChannelSummary> => {
+  return customFetch<ChannelSummary>(getCreateChannelUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createChannelRequest),
+  });
+};
+
+export const getCreateChannelMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createChannel>>,
+    TError,
+    { data: BodyType<CreateChannelRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createChannel>>,
+  TError,
+  { data: BodyType<CreateChannelRequest> },
+  TContext
+> => {
+  const mutationKey = ["createChannel"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createChannel>>,
+    { data: BodyType<CreateChannelRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createChannel(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateChannelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createChannel>>
+>;
+export type CreateChannelMutationBody = BodyType<CreateChannelRequest>;
+export type CreateChannelMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Add a new channel to track
+ */
+export const useCreateChannel = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createChannel>>,
+    TError,
+    { data: BodyType<CreateChannelRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createChannel>>,
+  TError,
+  { data: BodyType<CreateChannelRequest> },
+  TContext
+> => {
+  return useMutation(getCreateChannelMutationOptions(options));
+};
+
+/**
+ * @summary Get a single channel
+ */
+export const getGetChannelUrl = (channelId: string) => {
+  return `/api/channels/${channelId}`;
+};
+
+export const getChannel = async (
+  channelId: string,
+  options?: RequestInit,
+): Promise<ChannelSummary> => {
+  return customFetch<ChannelSummary>(getGetChannelUrl(channelId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetChannelQueryKey = (channelId: string) => {
+  return [`/api/channels/${channelId}`] as const;
+};
+
+export const getGetChannelQueryOptions = <
+  TData = Awaited<ReturnType<typeof getChannel>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  channelId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getChannel>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetChannelQueryKey(channelId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getChannel>>> = ({
+    signal,
+  }) => getChannel(channelId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!channelId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getChannel>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetChannelQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getChannel>>
+>;
+export type GetChannelQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get a single channel
+ */
+
+export function useGetChannel<
+  TData = Awaited<ReturnType<typeof getChannel>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  channelId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getChannel>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetChannelQueryOptions(channelId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update a channel
+ */
+export const getUpdateChannelUrl = (channelId: string) => {
+  return `/api/channels/${channelId}`;
+};
+
+export const updateChannel = async (
+  channelId: string,
+  updateChannelRequest: UpdateChannelRequest,
+  options?: RequestInit,
+): Promise<ChannelSummary> => {
+  return customFetch<ChannelSummary>(getUpdateChannelUrl(channelId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateChannelRequest),
+  });
+};
+
+export const getUpdateChannelMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateChannel>>,
+    TError,
+    { channelId: string; data: BodyType<UpdateChannelRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateChannel>>,
+  TError,
+  { channelId: string; data: BodyType<UpdateChannelRequest> },
+  TContext
+> => {
+  const mutationKey = ["updateChannel"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateChannel>>,
+    { channelId: string; data: BodyType<UpdateChannelRequest> }
+  > = (props) => {
+    const { channelId, data } = props ?? {};
+
+    return updateChannel(channelId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateChannelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateChannel>>
+>;
+export type UpdateChannelMutationBody = BodyType<UpdateChannelRequest>;
+export type UpdateChannelMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Update a channel
+ */
+export const useUpdateChannel = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateChannel>>,
+    TError,
+    { channelId: string; data: BodyType<UpdateChannelRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateChannel>>,
+  TError,
+  { channelId: string; data: BodyType<UpdateChannelRequest> },
+  TContext
+> => {
+  return useMutation(getUpdateChannelMutationOptions(options));
+};
+
+/**
+ * @summary Remove a channel from tracking
+ */
+export const getDeleteChannelUrl = (channelId: string) => {
+  return `/api/channels/${channelId}`;
+};
+
+export const deleteChannel = async (
+  channelId: string,
+  options?: RequestInit,
+): Promise<DeleteChannelResponse> => {
+  return customFetch<DeleteChannelResponse>(getDeleteChannelUrl(channelId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteChannelMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteChannel>>,
+    TError,
+    { channelId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteChannel>>,
+  TError,
+  { channelId: string },
+  TContext
+> => {
+  const mutationKey = ["deleteChannel"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteChannel>>,
+    { channelId: string }
+  > = (props) => {
+    const { channelId } = props ?? {};
+
+    return deleteChannel(channelId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteChannelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteChannel>>
+>;
+
+export type DeleteChannelMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Remove a channel from tracking
+ */
+export const useDeleteChannel = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteChannel>>,
+    TError,
+    { channelId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteChannel>>,
+  TError,
+  { channelId: string },
+  TContext
+> => {
+  return useMutation(getDeleteChannelMutationOptions(options));
+};
+
+/**
+ * Returns daily views, subscribers, watch time, and engagement
  * @summary Get daily metrics for a channel
  */
 export const getGetChannelMetricsUrl = (

@@ -16,13 +16,28 @@ export const HealthCheckResponse = zod.object({
 });
 
 /**
- * Returns all 5 channels with summary stats
+ * Returns metadata for all platforms that can be tracked
+ * @summary List all supported platforms
+ */
+export const GetPlatformsResponseItem = zod.object({
+  id: zod.string(),
+  name: zod.string(),
+  color: zod.string(),
+  supportsAnalytics: zod.boolean(),
+  supportsRevenue: zod.boolean(),
+});
+export const GetPlatformsResponse = zod.array(GetPlatformsResponseItem);
+
+/**
+ * Returns all channels with summary stats
  * @summary List all tracked channels
  */
 export const GetChannelsResponseItem = zod.object({
   id: zod.string(),
   name: zod.string(),
   handle: zod.string(),
+  platform: zod.string(),
+  url: zod.string().optional(),
   avatarColor: zod.string(),
   subscribers: zod.number(),
   totalViews: zod.number(),
@@ -36,7 +51,92 @@ export const GetChannelsResponseItem = zod.object({
 export const GetChannelsResponse = zod.array(GetChannelsResponseItem);
 
 /**
- * Returns 30 days of daily views, subscribers, watch time, and engagement
+ * @summary Add a new channel to track
+ */
+export const CreateChannelBody = zod.object({
+  name: zod.string(),
+  handle: zod.string(),
+  platform: zod.string(),
+  avatarColor: zod.string(),
+  url: zod.string().optional(),
+  subscribers: zod.number().optional(),
+  totalViews: zod.number().optional(),
+  totalVideos: zod.number().optional(),
+});
+
+/**
+ * @summary Get a single channel
+ */
+export const GetChannelParams = zod.object({
+  channelId: zod.coerce.string(),
+});
+
+export const GetChannelResponse = zod.object({
+  id: zod.string(),
+  name: zod.string(),
+  handle: zod.string(),
+  platform: zod.string(),
+  url: zod.string().optional(),
+  avatarColor: zod.string(),
+  subscribers: zod.number(),
+  totalViews: zod.number(),
+  totalVideos: zod.number(),
+  totalWatchTimeHours: zod.number(),
+  avgViewsPerVideo: zod.number(),
+  subscriberGrowth30d: zod.number(),
+  viewsGrowth30d: zod.number(),
+  engagementRate: zod.number(),
+});
+
+/**
+ * @summary Update a channel
+ */
+export const UpdateChannelParams = zod.object({
+  channelId: zod.coerce.string(),
+});
+
+export const UpdateChannelBody = zod.object({
+  name: zod.string().optional(),
+  handle: zod.string().optional(),
+  platform: zod.string().optional(),
+  avatarColor: zod.string().optional(),
+  url: zod.string().optional(),
+  subscribers: zod.number().optional(),
+  totalViews: zod.number().optional(),
+  totalVideos: zod.number().optional(),
+});
+
+export const UpdateChannelResponse = zod.object({
+  id: zod.string(),
+  name: zod.string(),
+  handle: zod.string(),
+  platform: zod.string(),
+  url: zod.string().optional(),
+  avatarColor: zod.string(),
+  subscribers: zod.number(),
+  totalViews: zod.number(),
+  totalVideos: zod.number(),
+  totalWatchTimeHours: zod.number(),
+  avgViewsPerVideo: zod.number(),
+  subscriberGrowth30d: zod.number(),
+  viewsGrowth30d: zod.number(),
+  engagementRate: zod.number(),
+});
+
+/**
+ * @summary Remove a channel from tracking
+ */
+export const DeleteChannelParams = zod.object({
+  channelId: zod.coerce.string(),
+});
+
+export const DeleteChannelResponse = zod.object({
+  success: zod.boolean(),
+  id: zod.string(),
+});
+
+/**
+ * Returns daily views, subscribers, watch time, and engagement
  * @summary Get daily metrics for a channel
  */
 export const GetChannelMetricsParams = zod.object({

@@ -13,10 +13,20 @@ export interface ErrorResponse {
   error: string;
 }
 
+export interface Platform {
+  id: string;
+  name: string;
+  color: string;
+  supportsAnalytics: boolean;
+  supportsRevenue: boolean;
+}
+
 export interface ChannelSummary {
   id: string;
   name: string;
   handle: string;
+  platform: string;
+  url?: string;
   avatarColor: string;
   subscribers: number;
   totalViews: number;
@@ -26,6 +36,33 @@ export interface ChannelSummary {
   subscriberGrowth30d: number;
   viewsGrowth30d: number;
   engagementRate: number;
+}
+
+export interface CreateChannelRequest {
+  name: string;
+  handle: string;
+  platform: string;
+  avatarColor: string;
+  url?: string;
+  subscribers?: number;
+  totalViews?: number;
+  totalVideos?: number;
+}
+
+export interface UpdateChannelRequest {
+  name?: string;
+  handle?: string;
+  platform?: string;
+  avatarColor?: string;
+  url?: string;
+  subscribers?: number;
+  totalViews?: number;
+  totalVideos?: number;
+}
+
+export interface DeleteChannelResponse {
+  success: boolean;
+  id: string;
 }
 
 export interface DailyMetric {
