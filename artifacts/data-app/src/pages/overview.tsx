@@ -9,36 +9,75 @@ import {
   getGetChannelsQueryKey,
 } from "@workspace/api-client-react";
 import {
-  AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, Bar
+  AreaChart,
+  Area,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  ComposedChart,
+  Bar,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { KPICard } from "@/components/dashboard/kpi-card";
-import { DarkModeToggle, ExportPdfButton, SplitRefreshButton, LastRefreshed } from "@/components/dashboard/controls";
+import {
+  DarkModeToggle,
+  ExportPdfButton,
+  SplitRefreshButton,
+  LastRefreshed,
+} from "@/components/dashboard/controls";
 import { CustomTooltip, CustomLegend } from "@/components/dashboard/charts";
-import { CHART_COLORS, formatCompact, formatCurrency, formatPercent, formatDate } from "@/lib/formatters";
+import {
+  CHART_COLORS,
+  formatCompact,
+  formatCurrency,
+  formatPercent,
+  formatDate,
+} from "@/lib/formatters";
 import { CSVLink } from "react-csv";
-import { Download, TrendingUp, Users, Eye, Clock, DollarSign } from "lucide-react";
-import { Progress } from "@/components/ui/progress";
+import { Download, TrendingUp, Eye, AlertCircle } from "lucide-react";
 
 const DATA_SOURCES = ["YouTube Data API v3", "Analytics DB"];
 
+function getDarkPref(): boolean {
+  try {
+    const stored = localStorage.getItem("yt_dark");
+    if (stored !== null) return stored === "1";
+  } catch {}
+  return document.documentElement.classList.contains("dark");
+}
+
 export function OverviewPage() {
-  const [isDark, setIsDark] = useState(true);
+  const [isDark, setIsDark] = useState(getDarkPref);
   const queryClient = useQueryClient();
 
   const overviewQuery = useGetOverview();
   const trendsQuery = useGetOverviewTrends({ days: 30 });
   const channelsQuery = useGetChannels();
 
-  const loading = 
-    overviewQuery.isLoading || overviewQuery.isFetching ||
-    trendsQuery.isLoading || trendsQuery.isFetching ||
-    channelsQuery.isLoading || channelsQuery.isFetching;
+  const isInitialLoading =
+    overviewQuery.isLoading ||
+    trendsQuery.isLoading ||
+    channelsQuery.isLoading;
+
+  const isBusy =
+    overviewQuery.isFetching ||
+    trendsQuery.isFetching ||
+    channelsQuery.isFetching;
+
+  const hasError =
+    overviewQuery.isError || trendsQuery.isError || channelsQuery.isError;
 
   const handleRefresh = () => {
     queryClient.invalidateQueries({ queryKey: getGetOverviewQueryKey() });
-    queryClient.invalidateQueries({ queryKey: getGetOverviewTrendsQueryKey({ days: 30 }) });
+    queryClient.invalidateQueries({
+      queryKey: getGetOverviewTrendsQueryKey({ days: 30 }),
+    });
     queryClient.invalidateQueries({ queryKey: getGetChannelsQueryKey() });
   };
 
@@ -51,16 +90,21 @@ export function OverviewPage() {
   }, [channelsQuery.data]);
 
   const maxViews = sortedChannels.length > 0 ? sortedChannels[0].totalViews : 1;
+  const channelCount = channelsQuery.data?.length ?? 0;
 
   return (
     <div className="min-h-screen bg-background px-4 py-6 md:px-8">
       <div className="max-w-[1600px] mx-auto space-y-6">
-        
+
         {/* Header */}
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-4">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Mission Control</h1>
-            <p className="text-muted-foreground mt-1 text-sm">Aggregated performance across 5 tracked channels</p>
+            <p className="text-muted-foreground mt-1 text-sm">
+              {isInitialLoading
+                ? "Loading channels…"
+                : `Aggregated performance across ${channelCount} tracked channel${channelCount !== 1 ? "s" : ""}`}
+            </p>
             <div className="flex flex-wrap items-center gap-1.5 mt-2">
               <span className="text-[12px] text-muted-foreground shrink-0">Sources:</span>
               {DATA_SOURCES.map((source) => (
@@ -68,7 +112,9 @@ export function OverviewPage() {
                   key={source}
                   className="text-[11px] font-semibold rounded px-2 py-0.5 truncate print:!bg-[rgb(229,231,235)] print:!text-[rgb(75,85,99)]"
                   style={{
-                    backgroundColor: isDark ? "rgba(255,255,255,0.1)" : "rgb(229, 231, 235)",
+                    backgroundColor: isDark
+                      ? "rgba(255,255,255,0.1)"
+                      : "rgb(229, 231, 235)",
                     color: isDark ? "#c8c9cc" : "rgb(75, 85, 99)",
                   }}
                 >
@@ -79,41 +125,53 @@ export function OverviewPage() {
             <LastRefreshed updatedAt={overviewQuery.dataUpdatedAt} />
           </div>
           <div className="flex items-center gap-2 print:hidden">
-            <SplitRefreshButton isDark={isDark} loading={loading} onRefresh={handleRefresh} />
-            <ExportPdfButton isDark={isDark} loading={loading} />
+            <SplitRefreshButton
+              isDark={isDark}
+              loading={isInitialLoading || isBusy}
+              onRefresh={handleRefresh}
+            />
+            <ExportPdfButton isDark={isDark} loading={isInitialLoading} />
             <DarkModeToggle isDark={isDark} setIsDark={setIsDark} />
           </div>
         </div>
 
+        {/* Error banner */}
+        {hasError && (
+          <div className="flex items-center gap-2 bg-destructive/10 border border-destructive/20 text-destructive px-4 py-3 rounded-lg text-sm">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            Some data failed to load. Check your API connection and try refreshing.
+          </div>
+        )}
+
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
-          <KPICard 
-            title="Total Subs" 
-            value={overviewQuery.data ? formatCompact(overviewQuery.data.totalSubscribers) : '--'} 
-            change={overviewQuery.data?.subscriberGrowth30d} 
-            loading={loading}
+          <KPICard
+            title="Total Subs"
+            value={overviewQuery.data ? formatCompact(overviewQuery.data.totalSubscribers) : "--"}
+            change={overviewQuery.data?.subscriberGrowth30d}
+            loading={isInitialLoading}
           />
-          <KPICard 
-            title="30d Views" 
-            value={overviewQuery.data ? formatCompact(overviewQuery.data.totalViews30d) : '--'} 
-            change={overviewQuery.data?.viewsGrowth30d} 
-            loading={loading}
+          <KPICard
+            title="30d Views"
+            value={overviewQuery.data ? formatCompact(overviewQuery.data.totalViews30d) : "--"}
+            change={overviewQuery.data?.viewsGrowth30d}
+            loading={isInitialLoading}
           />
-          <KPICard 
-            title="30d Watch Hrs" 
-            value={overviewQuery.data ? formatCompact(overviewQuery.data.totalWatchTimeHours30d) : '--'} 
-            loading={loading}
+          <KPICard
+            title="30d Watch Hrs"
+            value={overviewQuery.data ? formatCompact(overviewQuery.data.totalWatchTimeHours30d) : "--"}
+            loading={isInitialLoading}
           />
-          <KPICard 
-            title="30d Revenue" 
-            value={overviewQuery.data ? formatCurrency(overviewQuery.data.totalEstimatedRevenue30d) : '--'} 
+          <KPICard
+            title="30d Revenue"
+            value={overviewQuery.data ? formatCurrency(overviewQuery.data.totalEstimatedRevenue30d) : "--"}
             change={overviewQuery.data?.revenueGrowth30d}
-            loading={loading}
+            loading={isInitialLoading}
           />
-          <KPICard 
-            title="Avg Engagement" 
-            value={overviewQuery.data ? formatPercent(overviewQuery.data.avgEngagementRate) : '--'} 
-            loading={loading}
+          <KPICard
+            title="Avg Engagement"
+            value={overviewQuery.data ? formatPercent(overviewQuery.data.avgEngagementRate) : "--"}
+            loading={isInitialLoading}
           />
         </div>
 
@@ -121,15 +179,26 @@ export function OverviewPage() {
           {/* Main Chart */}
           <Card className="lg:col-span-2 shadcn-card bg-card">
             <CardHeader className="px-5 pt-5 pb-2 flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-base font-semibold tracking-tight">Cross-Channel Trends (30d)</CardTitle>
-              {!loading && trendsQuery.data && trendsQuery.data.length > 0 && (
-                <CSVLink data={trendsQuery.data} filename="network-trends.csv" className="print:hidden flex items-center justify-center w-[26px] h-[26px] rounded-[6px] transition-colors hover:bg-muted" aria-label="Export CSV">
-                  <Download className="w-3.5 h-3.5 text-muted-foreground" />
-                </CSVLink>
-              )}
+              <CardTitle className="text-base font-semibold tracking-tight">
+                Cross-Channel Trends (30d)
+              </CardTitle>
+              {!isInitialLoading &&
+                trendsQuery.data &&
+                trendsQuery.data.length > 0 && (
+                  <CSVLink
+                    data={trendsQuery.data}
+                    filename="network-trends.csv"
+                    className="print:hidden flex items-center justify-center w-[26px] h-[26px] rounded-[6px] transition-colors hover:bg-muted"
+                    aria-label="Export CSV"
+                  >
+                    <Download className="w-3.5 h-3.5 text-muted-foreground" />
+                  </CSVLink>
+                )}
             </CardHeader>
             <CardContent className="p-5 pt-2">
-              {loading ? <Skeleton className="w-full h-[340px]" /> : (
+              {isInitialLoading ? (
+                <Skeleton className="w-full h-[340px]" />
+              ) : (
                 <ResponsiveContainer width="100%" height={340} debounce={0}>
                   <ComposedChart data={trendsQuery.data}>
                     <defs>
@@ -138,14 +207,68 @@ export function OverviewPage() {
                         <stop offset="100%" stopColor={CHART_COLORS.blue} stopOpacity={0.01} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
-                    <XAxis dataKey="date" tickFormatter={(d) => formatDate(d)} tick={{ fontSize: 11, fill: tickColor }} stroke={tickColor} tickMargin={8} minTickGap={30} />
-                    <YAxis yAxisId="left" tickFormatter={formatCompact} tick={{ fontSize: 11, fill: tickColor }} stroke={tickColor} tickMargin={8} />
-                    <YAxis yAxisId="right" orientation="right" tickFormatter={formatCompact} tick={{ fontSize: 11, fill: tickColor }} stroke={tickColor} tickMargin={8} />
-                    <Tooltip content={<CustomTooltip />} isAnimationActive={false} cursor={{ fill: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', stroke: 'none' }} />
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke={gridColor}
+                      vertical={false}
+                    />
+                    <XAxis
+                      dataKey="date"
+                      tickFormatter={(d) => formatDate(d)}
+                      tick={{ fontSize: 11, fill: tickColor }}
+                      stroke={tickColor}
+                      tickMargin={8}
+                      minTickGap={30}
+                    />
+                    <YAxis
+                      yAxisId="left"
+                      tickFormatter={formatCompact}
+                      tick={{ fontSize: 11, fill: tickColor }}
+                      stroke={tickColor}
+                      tickMargin={8}
+                    />
+                    <YAxis
+                      yAxisId="right"
+                      orientation="right"
+                      tickFormatter={formatCompact}
+                      tick={{ fontSize: 11, fill: tickColor }}
+                      stroke={tickColor}
+                      tickMargin={8}
+                    />
+                    <Tooltip
+                      content={<CustomTooltip />}
+                      isAnimationActive={false}
+                      cursor={{
+                        fill: isDark
+                          ? "rgba(255,255,255,0.05)"
+                          : "rgba(0,0,0,0.05)",
+                        stroke: "none",
+                      }}
+                    />
                     <Legend content={<CustomLegend />} />
-                    <Area yAxisId="left" type="monotone" dataKey="totalViews" name="Views" fill="url(#gradientViews)" stroke={CHART_COLORS.blue} fillOpacity={1} strokeWidth={2} isAnimationActive={false} activeDot={{ r: 4, strokeWidth: 0, fill: CHART_COLORS.blue }} />
-                    <Line yAxisId="right" type="monotone" dataKey="totalSubscribers" name="Subscribers" stroke={CHART_COLORS.purple} strokeWidth={2} dot={false} isAnimationActive={false} activeDot={{ r: 4, strokeWidth: 0, fill: CHART_COLORS.purple }} />
+                    <Area
+                      yAxisId="left"
+                      type="monotone"
+                      dataKey="totalViews"
+                      name="Views"
+                      fill="url(#gradientViews)"
+                      stroke={CHART_COLORS.blue}
+                      fillOpacity={1}
+                      strokeWidth={2}
+                      isAnimationActive={false}
+                      activeDot={{ r: 4, strokeWidth: 0, fill: CHART_COLORS.blue }}
+                    />
+                    <Line
+                      yAxisId="right"
+                      type="monotone"
+                      dataKey="totalSubscribers"
+                      name="Subscribers"
+                      stroke={CHART_COLORS.purple}
+                      strokeWidth={2}
+                      dot={false}
+                      isAnimationActive={false}
+                      activeDot={{ r: 4, strokeWidth: 0, fill: CHART_COLORS.purple }}
+                    />
                   </ComposedChart>
                 </ResponsiveContainer>
               )}
@@ -156,36 +279,55 @@ export function OverviewPage() {
           <div className="space-y-6">
             <Card className="shadcn-card bg-card">
               <CardHeader className="px-5 pt-5 pb-3">
-                <CardTitle className="text-base font-semibold tracking-tight">Channel Leaderboard</CardTitle>
+                <CardTitle className="text-base font-semibold tracking-tight">
+                  Channel Leaderboard
+                </CardTitle>
               </CardHeader>
               <CardContent className="px-5 pb-5">
-                {loading ? (
+                {isInitialLoading ? (
                   <div className="space-y-4">
                     {[...Array(5)].map((_, i) => (
                       <div key={i} className="space-y-2">
-                        <div className="flex justify-between"><Skeleton className="h-4 w-24"/><Skeleton className="h-4 w-12"/></div>
+                        <div className="flex justify-between">
+                          <Skeleton className="h-4 w-24" />
+                          <Skeleton className="h-4 w-12" />
+                        </div>
                         <Skeleton className="h-2 w-full" />
                       </div>
                     ))}
                   </div>
+                ) : sortedChannels.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">
+                    No channels tracked yet. Add one in Settings.
+                  </p>
                 ) : (
                   <div className="space-y-5">
-                    {sortedChannels.map(channel => (
+                    {sortedChannels.map((channel) => (
                       <div key={channel.id} className="space-y-1.5">
                         <div className="flex justify-between items-end text-sm">
                           <div className="flex items-center gap-2">
-                            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: channel.avatarColor }} />
-                            <span className="font-medium text-foreground">{channel.name}</span>
+                            <div
+                              className="w-2.5 h-2.5 rounded-full"
+                              style={{ backgroundColor: channel.avatarColor }}
+                            />
+                            <span className="font-medium text-foreground">
+                              {channel.name}
+                            </span>
                           </div>
-                          <span className="font-mono text-xs text-muted-foreground">{formatCompact(channel.totalViews)}</span>
+                          <span className="font-mono text-xs text-muted-foreground">
+                            {formatCompact(channel.totalViews)}
+                          </span>
                         </div>
                         <div className="h-1.5 w-full bg-muted/50 rounded-full overflow-hidden">
-                          <div 
-                            className="h-full rounded-full" 
-                            style={{ 
-                              width: `${Math.max((channel.totalViews / maxViews) * 100, 2)}%`,
-                              backgroundColor: channel.avatarColor 
-                            }} 
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${Math.max(
+                                (channel.totalViews / maxViews) * 100,
+                                2
+                              )}%`,
+                              backgroundColor: channel.avatarColor,
+                            }}
                           />
                         </div>
                       </div>
@@ -202,9 +344,15 @@ export function OverviewPage() {
                   <Eye className="w-4 h-4 text-primary" />
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Most Viewed</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
+                    Most Viewed
+                  </p>
                   <div className="text-sm font-bold mt-0.5 text-foreground">
-                    {loading ? <Skeleton className="h-4 w-20" /> : overviewQuery.data?.topChannelByViews || "N/A"}
+                    {isInitialLoading ? (
+                      <Skeleton className="h-4 w-20" />
+                    ) : (
+                      overviewQuery.data?.topChannelByViews || "N/A"
+                    )}
                   </div>
                 </div>
               </div>
@@ -213,16 +361,21 @@ export function OverviewPage() {
                   <TrendingUp className="w-4 h-4 text-green-500" />
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Fastest Growth</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
+                    Fastest Growth
+                  </p>
                   <div className="text-sm font-bold mt-0.5 text-foreground">
-                    {loading ? <Skeleton className="h-4 w-20" /> : overviewQuery.data?.topChannelByGrowth || "N/A"}
+                    {isInitialLoading ? (
+                      <Skeleton className="h-4 w-20" />
+                    ) : (
+                      overviewQuery.data?.topChannelByGrowth || "N/A"
+                    )}
                   </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
-
       </div>
     </div>
   );

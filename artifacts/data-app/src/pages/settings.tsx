@@ -121,6 +121,7 @@ export function SettingsPage() {
   const [zernioAccounts, setZernioAccounts] = useState<ZernioAccount[] | null>(null);
   const [zernioLoading, setZernioLoading] = useState(false);
   const [zernioError, setZernioError] = useState("");
+  const [importError, setImportError] = useState("");
   const [syncing, setSyncing] = useState<Set<string>>(new Set());
   const [synced, setSynced] = useState<Set<string>>(new Set());
 
@@ -225,6 +226,7 @@ export function SettingsPage() {
 
   async function importZernioAccount(account: ZernioAccount) {
     setSyncing((s) => new Set(s).add(account.id));
+    setImportError("");
     try {
       await createMutation.mutateAsync({
         data: {
@@ -240,8 +242,9 @@ export function SettingsPage() {
       });
       queryClient.invalidateQueries({ queryKey: getGetChannelsQueryKey() });
       setSynced((s) => new Set(s).add(account.id));
-    } catch {
-      // silently ignore
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } }; message?: string };
+      setImportError(err?.response?.data?.error ?? err?.message ?? `Failed to import "${account.name}"`);
     } finally {
       setSyncing((s) => { const n = new Set(s); n.delete(account.id); return n; });
     }
@@ -387,6 +390,13 @@ export function SettingsPage() {
             {zernioError && (
               <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 px-4 py-3 rounded-lg">
                 {zernioError}
+              </div>
+            )}
+
+            {importError && (
+              <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 px-4 py-3 rounded-lg">
+                <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{importError}</span>
               </div>
             )}
 
