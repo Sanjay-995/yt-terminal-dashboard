@@ -6,7 +6,6 @@ services:
     runtime: node
     plan: free
     region: oregon
-    nodeVersion: 22
     buildCommand: |
       corepack enable
       corepack prepare pnpm@9.15.0 --activate
