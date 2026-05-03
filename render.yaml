@@ -33,3 +33,5 @@ services:
         sync: false        # comma-separated, e.g. @MindfulHz,@Dazzleboo,@MapMindExplains
       - key: PUBLIC_URL
         sync: false        # set to https://<your-render-subdomain>.onrender.com after first deploy
+      - key: DATABASE_URL
+        sync: false        # Postgres connection string (Neon free tier works great)
