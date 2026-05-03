@@ -9,7 +9,7 @@ services:
     buildCommand: |
       corepack enable
       corepack prepare pnpm@9.15.0 --activate
-      pnpm install --frozen-lockfile
+      NODE_ENV=development pnpm install --frozen-lockfile --prod=false
       PORT=10000 BASE_PATH=/ pnpm --filter @workspace/data-app run build
       pnpm --filter @workspace/api-server run build
     startCommand: SERVE_FRONTEND=1 node --enable-source-maps artifacts/api-server/dist/index.mjs
