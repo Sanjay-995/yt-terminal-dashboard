@@ -9,22 +9,19 @@ import {
   getGetChannelsQueryKey,
 } from "@workspace/api-client-react";
 import {
-  AreaChart,
   Area,
-  LineChart,
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
   ComposedChart,
-  Bar,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { KPICard } from "@/components/dashboard/kpi-card";
+import { Leaderboard } from "@/components/dashboard/leaderboard";
 import {
   DarkModeToggle,
   ExportPdfButton,
@@ -38,11 +35,11 @@ import {
   formatCurrency,
   formatPercent,
   formatDate,
+  isMissing,
+  deriveAccent,
 } from "@/lib/formatters";
 import { CSVLink } from "react-csv";
-import { Download, TrendingUp, Eye, AlertCircle } from "lucide-react";
-
-const DATA_SOURCES = ["YouTube Data API v3", "Analytics DB"];
+import { Download, AlertCircle, Info } from "lucide-react";
 
 function getDarkPref(): boolean {
   try {
@@ -84,44 +81,74 @@ export function OverviewPage() {
   const gridColor = isDark ? "rgba(255,255,255,0.06)" : "#e5e5e5";
   const tickColor = isDark ? "#88888b" : "#71717a";
 
-  const sortedChannels = useMemo(() => {
-    if (!channelsQuery.data) return [];
-    return [...channelsQuery.data].sort((a, b) => b.totalViews - a.totalViews);
-  }, [channelsQuery.data]);
+  const channels = channelsQuery.data ?? [];
+  const channelCount = channels.length;
 
-  const maxViews = sortedChannels.length > 0 ? sortedChannels[0].totalViews : 1;
-  const channelCount = channelsQuery.data?.length ?? 0;
+  // Channels for which the OAuth account owns the underlying YouTube channel
+  // and we therefore have Analytics API access (revenue, watch time, daily
+  // breakdowns). Backend computes this from getOwnedChannelIds().
+  const connectedChannels = useMemo(
+    () => channels.filter((c) => c.hasAnalyticsAccess),
+    [channels],
+  );
+
+  // Decide what to render in the trends chart. Only one channel has real
+  // time-series → the "Cross-Channel" framing is misleading.
+  const onlyConnected = connectedChannels.length === 1
+    ? connectedChannels[0]
+    : null;
+
+  const trendData = trendsQuery.data ?? [];
+  const trendsHaveSignal = trendData.some(
+    (d) => (d.totalViews ?? 0) > 0 || (d.totalSubscribers ?? 0) > 0,
+  );
+
+  const overview = overviewQuery.data;
+  // Provenance flags. If only one channel is connected, aggregates that
+  // require Analytics (revenue, engagement, watch hours, growth) effectively
+  // describe that channel only — flag them as "live" but with a hint.
+  const aggregateHint =
+    onlyConnected && !isInitialLoading
+      ? `From ${onlyConnected.name} (only connected channel)`
+      : connectedChannels.length > 1
+      ? `Across ${connectedChannels.length} connected channels`
+      : undefined;
+
+  const subsAreReal = !isMissing(overview?.totalSubscribers);
 
   return (
     <div className="min-h-screen bg-background px-4 py-6 md:px-8">
       <div className="max-w-[1600px] mx-auto space-y-6">
-
         {/* Header */}
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-4">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Mission Control</h1>
-            <p className="text-muted-foreground mt-1 text-sm">
-              {isInitialLoading
-                ? "Loading channels…"
-                : `Aggregated performance across ${channelCount} tracked channel${channelCount !== 1 ? "s" : ""}`}
-            </p>
-            <div className="flex flex-wrap items-center gap-1.5 mt-2">
-              <span className="text-[12px] text-muted-foreground shrink-0">Sources:</span>
-              {DATA_SOURCES.map((source) => (
-                <span
-                  key={source}
-                  className="text-[11px] font-semibold rounded px-2 py-0.5 truncate print:!bg-[rgb(229,231,235)] print:!text-[rgb(75,85,99)]"
-                  style={{
-                    backgroundColor: isDark
-                      ? "rgba(255,255,255,0.1)"
-                      : "rgb(229, 231, 235)",
-                    color: isDark ? "#c8c9cc" : "rgb(75, 85, 99)",
-                  }}
-                >
-                  {source}
-                </span>
-              ))}
+            <div className="flex items-baseline gap-2.5">
+              <h1 className="text-[26px] font-bold tracking-tight">
+                Mission Control
+              </h1>
+              <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted-foreground">
+                Overview
+              </span>
             </div>
+            <p className="text-muted-foreground mt-1 text-[13px]">
+              {isInitialLoading ? (
+                "Loading channels…"
+              ) : channelCount === 0 ? (
+                "No channels tracked yet."
+              ) : (
+                <>
+                  Tracking{" "}
+                  <span className="font-mono tabular-nums text-foreground">
+                    {channelCount}
+                  </span>{" "}
+                  channel{channelCount === 1 ? "" : "s"} ·{" "}
+                  <span className="font-mono tabular-nums text-foreground">
+                    {connectedChannels.length}
+                  </span>{" "}
+                  with live Analytics
+                </>
+              )}
+            </p>
             <LastRefreshed updatedAt={overviewQuery.dataUpdatedAt} />
           </div>
           <div className="flex items-center gap-2 print:hidden">
@@ -135,42 +162,79 @@ export function OverviewPage() {
           </div>
         </div>
 
+        {/* Provenance legend — quietly placed under the header */}
+        {!isInitialLoading && channelCount > 0 && (
+          <ProvenanceLegend
+            connectedCount={connectedChannels.length}
+            totalCount={channelCount}
+          />
+        )}
+
         {/* Error banner */}
         {hasError && (
           <div className="flex items-center gap-2 bg-destructive/10 border border-destructive/20 text-destructive px-4 py-3 rounded-lg text-sm">
             <AlertCircle className="w-4 h-4 shrink-0" />
-            Some data failed to load. Check your API connection and try refreshing.
+            Some data failed to load. Check your API connection and try
+            refreshing.
           </div>
         )}
 
-        {/* KPIs */}
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        {/* KPIs — total subs leads (always real), Analytics-derived metrics
+            follow with explicit provenance dots. */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
           <KPICard
             title="Total Subs"
-            value={overviewQuery.data ? formatCompact(overviewQuery.data.totalSubscribers) : "--"}
-            change={overviewQuery.data?.subscriberGrowth30d}
+            value={
+              overview ? formatCompact(overview.totalSubscribers) : "--"
+            }
+            change={overview?.subscriberGrowth30d}
+            tone="primary"
+            provenance={subsAreReal ? "public" : "unavailable"}
+            hint="Sum across all tracked channels"
             loading={isInitialLoading}
           />
           <KPICard
             title="30d Views"
-            value={overviewQuery.data ? formatCompact(overviewQuery.data.totalViews30d) : "--"}
-            change={overviewQuery.data?.viewsGrowth30d}
+            value={overview ? formatCompact(overview.totalViews30d) : "--"}
+            change={overview?.viewsGrowth30d}
+            provenance={
+              connectedChannels.length > 0 ? "live" : "unavailable"
+            }
+            hint={aggregateHint}
             loading={isInitialLoading}
           />
           <KPICard
             title="30d Watch Hrs"
-            value={overviewQuery.data ? formatCompact(overviewQuery.data.totalWatchTimeHours30d) : "--"}
+            value={
+              overview ? formatCompact(overview.totalWatchTimeHours30d) : "--"
+            }
+            provenance={
+              connectedChannels.length > 0 ? "live" : "unavailable"
+            }
+            hint={aggregateHint}
             loading={isInitialLoading}
           />
           <KPICard
             title="30d Revenue"
-            value={overviewQuery.data ? formatCurrency(overviewQuery.data.totalEstimatedRevenue30d) : "--"}
-            change={overviewQuery.data?.revenueGrowth30d}
+            value={
+              overview ? formatCurrency(overview.totalEstimatedRevenue30d) : "--"
+            }
+            change={overview?.revenueGrowth30d}
+            provenance={
+              connectedChannels.length > 0 ? "live" : "unavailable"
+            }
+            hint={aggregateHint}
             loading={isInitialLoading}
           />
           <KPICard
             title="Avg Engagement"
-            value={overviewQuery.data ? formatPercent(overviewQuery.data.avgEngagementRate) : "--"}
+            value={
+              overview ? formatPercent(overview.avgEngagementRate) : "--"
+            }
+            provenance={
+              connectedChannels.length > 0 ? "live" : "unavailable"
+            }
+            hint={aggregateHint}
             loading={isInitialLoading}
           />
         </div>
@@ -178,17 +242,48 @@ export function OverviewPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Main Chart */}
           <Card className="lg:col-span-2 shadcn-card bg-card">
-            <CardHeader className="px-5 pt-5 pb-2 flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-base font-semibold tracking-tight">
-                Cross-Channel Trends (30d)
-              </CardTitle>
+            <CardHeader className="px-5 pt-5 pb-2 flex-row items-start justify-between space-y-0 gap-3">
+              <div className="min-w-0">
+                <CardTitle className="text-[15px] font-semibold tracking-tight flex items-center gap-2">
+                  {onlyConnected ? (
+                    <>
+                      <span
+                        className="inline-block w-2.5 h-2.5 rounded-sm shrink-0"
+                        style={{
+                          backgroundColor: deriveAccent(
+                            onlyConnected.name,
+                            onlyConnected.avatarColor,
+                          ),
+                        }}
+                      />
+                      <span className="truncate">
+                        {onlyConnected.name} · Daily Views & Subs
+                      </span>
+                    </>
+                  ) : connectedChannels.length === 0 ? (
+                    "Daily Views & Subs"
+                  ) : (
+                    "Cross-Channel Trends"
+                  )}
+                  <span className="text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground font-normal ml-1">
+                    30d
+                  </span>
+                </CardTitle>
+                {onlyConnected && (
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Showing the only channel with a connected Analytics feed.
+                    Connect more in Settings to compare.
+                  </p>
+                )}
+              </div>
               {!isInitialLoading &&
                 trendsQuery.data &&
-                trendsQuery.data.length > 0 && (
+                trendsQuery.data.length > 0 &&
+                trendsHaveSignal && (
                   <CSVLink
                     data={trendsQuery.data}
                     filename="network-trends.csv"
-                    className="print:hidden flex items-center justify-center w-[26px] h-[26px] rounded-[6px] transition-colors hover:bg-muted"
+                    className="print:hidden flex items-center justify-center w-[26px] h-[26px] rounded-[6px] transition-colors hover:bg-muted shrink-0"
                     aria-label="Export CSV"
                   >
                     <Download className="w-3.5 h-3.5 text-muted-foreground" />
@@ -198,13 +293,50 @@ export function OverviewPage() {
             <CardContent className="p-5 pt-2">
               {isInitialLoading ? (
                 <Skeleton className="w-full h-[340px]" />
+              ) : !trendsHaveSignal ? (
+                <ChartEmptyState
+                  message="No time-series data yet"
+                  hint={
+                    connectedChannels.length === 0
+                      ? "Connect a YouTube channel in Settings to start collecting daily Analytics."
+                      : "Daily metrics will appear here once Analytics has populated."
+                  }
+                />
               ) : (
                 <ResponsiveContainer width="100%" height={340} debounce={0}>
                   <ComposedChart data={trendsQuery.data}>
                     <defs>
-                      <linearGradient id="gradientViews" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={CHART_COLORS.blue} stopOpacity={0.4} />
-                        <stop offset="100%" stopColor={CHART_COLORS.blue} stopOpacity={0.01} />
+                      <linearGradient
+                        id="gradientViews"
+                        x1="0"
+                        y1="0"
+                        x2="0"
+                        y2="1"
+                      >
+                        <stop
+                          offset="0%"
+                          stopColor={
+                            onlyConnected
+                              ? deriveAccent(
+                                  onlyConnected.name,
+                                  onlyConnected.avatarColor,
+                                )
+                              : CHART_COLORS.blue
+                          }
+                          stopOpacity={0.4}
+                        />
+                        <stop
+                          offset="100%"
+                          stopColor={
+                            onlyConnected
+                              ? deriveAccent(
+                                  onlyConnected.name,
+                                  onlyConnected.avatarColor,
+                                )
+                              : CHART_COLORS.blue
+                          }
+                          stopOpacity={0.01}
+                        />
                       </linearGradient>
                     </defs>
                     <CartesianGrid
@@ -245,18 +377,33 @@ export function OverviewPage() {
                         stroke: "none",
                       }}
                     />
-                    <Legend content={<CustomLegend />} />
                     <Area
                       yAxisId="left"
                       type="monotone"
                       dataKey="totalViews"
                       name="Views"
                       fill="url(#gradientViews)"
-                      stroke={CHART_COLORS.blue}
+                      stroke={
+                        onlyConnected
+                          ? deriveAccent(
+                              onlyConnected.name,
+                              onlyConnected.avatarColor,
+                            )
+                          : CHART_COLORS.blue
+                      }
                       fillOpacity={1}
                       strokeWidth={2}
                       isAnimationActive={false}
-                      activeDot={{ r: 4, strokeWidth: 0, fill: CHART_COLORS.blue }}
+                      activeDot={{
+                        r: 4,
+                        strokeWidth: 0,
+                        fill: onlyConnected
+                          ? deriveAccent(
+                              onlyConnected.name,
+                              onlyConnected.avatarColor,
+                            )
+                          : CHART_COLORS.blue,
+                      }}
                     />
                     <Line
                       yAxisId="right"
@@ -267,20 +414,38 @@ export function OverviewPage() {
                       strokeWidth={2}
                       dot={false}
                       isAnimationActive={false}
-                      activeDot={{ r: 4, strokeWidth: 0, fill: CHART_COLORS.purple }}
+                      activeDot={{
+                        r: 4,
+                        strokeWidth: 0,
+                        fill: CHART_COLORS.purple,
+                      }}
                     />
                   </ComposedChart>
                 </ResponsiveContainer>
               )}
+              {trendsHaveSignal && !isInitialLoading && <CustomLegend
+                payload={[
+                  {
+                    value: "Views",
+                    color: onlyConnected
+                      ? deriveAccent(
+                          onlyConnected.name,
+                          onlyConnected.avatarColor,
+                        )
+                      : CHART_COLORS.blue,
+                  },
+                  { value: "Subscribers", color: CHART_COLORS.purple },
+                ]}
+              />}
             </CardContent>
           </Card>
 
-          {/* Channel Ranking */}
+          {/* Channel Leaderboard */}
           <div className="space-y-6">
             <Card className="shadcn-card bg-card">
               <CardHeader className="px-5 pt-5 pb-3">
-                <CardTitle className="text-base font-semibold tracking-tight">
-                  Channel Leaderboard
+                <CardTitle className="text-[15px] font-semibold tracking-tight">
+                  Leaderboard
                 </CardTitle>
               </CardHeader>
               <CardContent className="px-5 pb-5">
@@ -296,87 +461,64 @@ export function OverviewPage() {
                       </div>
                     ))}
                   </div>
-                ) : sortedChannels.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">
-                    No channels tracked yet. Add one in Settings.
-                  </p>
                 ) : (
-                  <div className="space-y-5">
-                    {sortedChannels.map((channel) => (
-                      <div key={channel.id} className="space-y-1.5">
-                        <div className="flex justify-between items-end text-sm">
-                          <div className="flex items-center gap-2">
-                            <div
-                              className="w-2.5 h-2.5 rounded-full"
-                              style={{ backgroundColor: channel.avatarColor }}
-                            />
-                            <span className="font-medium text-foreground">
-                              {channel.name}
-                            </span>
-                          </div>
-                          <span className="font-mono text-xs text-muted-foreground">
-                            {formatCompact(channel.totalViews)}
-                          </span>
-                        </div>
-                        <div className="h-1.5 w-full bg-muted/50 rounded-full overflow-hidden">
-                          <div
-                            className="h-full rounded-full"
-                            style={{
-                              width: `${Math.max(
-                                (channel.totalViews / maxViews) * 100,
-                                2
-                              )}%`,
-                              backgroundColor: channel.avatarColor,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <Leaderboard channels={channels} />
                 )}
               </CardContent>
             </Card>
-
-            {/* Quick Callouts */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-card border border-border p-4 rounded-lg flex flex-col items-start gap-2">
-                <div className="p-2 bg-primary/10 rounded-md">
-                  <Eye className="w-4 h-4 text-primary" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
-                    Most Viewed
-                  </p>
-                  <div className="text-sm font-bold mt-0.5 text-foreground">
-                    {isInitialLoading ? (
-                      <Skeleton className="h-4 w-20" />
-                    ) : (
-                      overviewQuery.data?.topChannelByViews || "N/A"
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="bg-card border border-border p-4 rounded-lg flex flex-col items-start gap-2">
-                <div className="p-2 bg-green-500/10 rounded-md">
-                  <TrendingUp className="w-4 h-4 text-green-500" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
-                    Fastest Growth
-                  </p>
-                  <div className="text-sm font-bold mt-0.5 text-foreground">
-                    {isInitialLoading ? (
-                      <Skeleton className="h-4 w-20" />
-                    ) : (
-                      overviewQuery.data?.topChannelByGrowth || "N/A"
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Quiet legend describing what the colored provenance dots mean on KPI cards. */
+function ProvenanceLegend({
+  connectedCount,
+  totalCount,
+}: {
+  connectedCount: number;
+  totalCount: number;
+}) {
+  const publicCount = totalCount - connectedCount;
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-muted-foreground">
+      <span className="inline-flex items-center gap-1.5">
+        <Info className="w-3 h-3" />
+        Data sources:
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E]" />
+        Live Analytics ({connectedCount})
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="w-1.5 h-1.5 rounded-full bg-[#94A3B8]" />
+        Public stats only ({publicCount})
+      </span>
+      <span className="inline-flex items-center gap-1.5 ml-auto font-mono uppercase tracking-wider">
+        <span className="w-1.5 h-1.5 rounded-full bg-[#52525B]" />
+        Unavailable
+      </span>
+    </div>
+  );
+}
+
+function ChartEmptyState({
+  message,
+  hint,
+}: {
+  message: string;
+  hint?: string;
+}) {
+  return (
+    <div className="w-full h-[340px] flex flex-col items-center justify-center gap-2 border border-dashed border-border rounded-md">
+      <p className="text-sm font-medium text-foreground">{message}</p>
+      {hint && (
+        <p className="text-xs text-muted-foreground max-w-xs text-center px-4">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }

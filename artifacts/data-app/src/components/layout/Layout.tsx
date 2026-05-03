@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { Sidebar } from "./Sidebar";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
@@ -8,8 +8,8 @@ import {
   Activity,
   LayoutDashboard,
   Settings,
-  RadioReceiver,
 } from "lucide-react";
+import { deriveAccent, formatCompact, isMissing } from "@/lib/formatters";
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -55,48 +55,106 @@ function MobileNav({ onClose }: { onClose: () => void }) {
   const [location] = useLocation();
   const { data: channels, isLoading } = useGetChannels();
 
+  const sortedChannels = useMemo(() => {
+    if (!channels) return [];
+    return [...channels].sort((a, b) => {
+      const aHas = (a.subscribers ?? 0) > 0 || (a.totalVideos ?? 0) > 0;
+      const bHas = (b.subscribers ?? 0) > 0 || (b.totalVideos ?? 0) > 0;
+      if (aHas !== bHas) return aHas ? -1 : 1;
+      return (b.subscribers ?? 0) - (a.subscribers ?? 0);
+    });
+  }, [channels]);
+
   return (
     <div className="flex flex-col h-full">
-      <div className="p-6 border-b border-border">
-        <h2 className="text-lg font-bold tracking-tight text-foreground flex items-center gap-2">
-          <Activity className="w-5 h-5 text-primary" />
+      <div className="px-5 pt-6 pb-5 border-b border-border">
+        <h2 className="text-[15px] font-bold tracking-tight text-foreground flex items-center gap-2">
+          <Activity className="w-4 h-4 text-primary" />
           YT Terminal
         </h2>
+        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground mt-1.5 font-mono">
+          Mission Control
+        </p>
       </div>
 
-      <nav className="flex-1 px-4 py-4 space-y-6 overflow-y-auto">
+      <nav className="flex-1 px-3 py-4 space-y-5 overflow-y-auto">
         <div>
-          <p className="px-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+          <p className="px-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-[0.12em] mb-1.5">
             Main
           </p>
-          <MobileNavItem
+          <Link
             href="/"
-            icon={<LayoutDashboard className="w-4 h-4" />}
-            label="Overview"
-            active={location === "/"}
             onClick={onClose}
-          />
+            className={`flex items-center gap-2.5 px-2 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              location === "/"
+                ? "bg-primary/10 text-primary"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted"
+            }`}
+          >
+            <LayoutDashboard className="w-4 h-4" />
+            <span>Overview</span>
+          </Link>
         </div>
 
         <div>
-          <p className="px-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-            Channels
-          </p>
-          <div className="space-y-1">
+          <div className="px-2 mb-1.5 flex items-center justify-between">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-[0.12em]">
+              Channels
+            </p>
+            {!isLoading && sortedChannels.length > 0 && (
+              <span className="text-[10px] font-mono text-muted-foreground tabular-nums">
+                {sortedChannels.length}
+              </span>
+            )}
+          </div>
+          <div className="space-y-0.5">
             {isLoading ? (
               <p className="px-2 text-sm text-muted-foreground">Loading…</p>
-            ) : channels?.length ? (
-              channels.map((channel) => (
-                <MobileNavItem
-                  key={channel.id}
-                  href={`/channels/${channel.id}`}
-                  icon={<RadioReceiver className="w-4 h-4" />}
-                  label={channel.name}
-                  active={location === `/channels/${channel.id}`}
-                  accentColor={channel.avatarColor}
-                  onClick={onClose}
-                />
-              ))
+            ) : sortedChannels.length ? (
+              sortedChannels.map((channel) => {
+                const accent = deriveAccent(channel.name, channel.avatarColor);
+                const subs = channel.subscribers;
+                const hasData =
+                  !isMissing(subs) &&
+                  ((subs ?? 0) > 0 || (channel.totalVideos ?? 0) > 0);
+                const initial =
+                  channel.name.replace(/^@/, "").charAt(0).toUpperCase() || "?";
+                const active = location === `/channels/${channel.id}`;
+                return (
+                  <Link
+                    key={channel.id}
+                    href={`/channels/${channel.id}`}
+                    onClick={onClose}
+                    className={`group flex items-center gap-2.5 px-2 py-1.5 rounded-md text-sm transition-colors ${
+                      active
+                        ? "bg-primary/10 text-primary"
+                        : hasData
+                        ? "text-foreground/80 hover:text-foreground hover:bg-muted"
+                        : "text-muted-foreground/70 hover:text-foreground hover:bg-muted"
+                    }`}
+                  >
+                    <span
+                      className={`shrink-0 w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold font-mono tracking-tighter text-white ${
+                        hasData ? "" : "opacity-40 grayscale"
+                      }`}
+                      style={{ backgroundColor: accent }}
+                      aria-hidden
+                    >
+                      {initial}
+                    </span>
+                    <span className="truncate flex-1 text-[13px] font-medium leading-tight">
+                      {channel.name}
+                    </span>
+                    <span
+                      className={`shrink-0 text-[10px] font-mono tabular-nums tracking-tight ${
+                        active ? "text-primary/70" : "text-muted-foreground/70"
+                      }`}
+                    >
+                      {isMissing(subs) ? "—" : formatCompact(subs)}
+                    </span>
+                  </Link>
+                );
+              })
             ) : (
               <p className="px-2 text-sm text-muted-foreground">
                 No channels yet
@@ -106,53 +164,20 @@ function MobileNav({ onClose }: { onClose: () => void }) {
         </div>
       </nav>
 
-      <div className="p-4 border-t border-border">
-        <MobileNavItem
+      <div className="p-3 border-t border-border">
+        <Link
           href="/settings"
-          icon={<Settings className="w-4 h-4" />}
-          label="Settings"
-          active={location === "/settings"}
           onClick={onClose}
-        />
+          className={`flex items-center gap-2 px-2 py-1.5 text-sm font-medium transition-colors w-full rounded-md ${
+            location === "/settings"
+              ? "bg-primary/10 text-primary"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted"
+          }`}
+        >
+          <Settings className="w-4 h-4" />
+          Settings
+        </Link>
       </div>
     </div>
-  );
-}
-
-function MobileNavItem({
-  href,
-  icon,
-  label,
-  active,
-  accentColor,
-  onClick,
-}: {
-  href: string;
-  icon: React.ReactNode;
-  label: string;
-  active: boolean;
-  accentColor?: string;
-  onClick: () => void;
-}) {
-  return (
-    <Link
-      href={href}
-      onClick={onClick}
-      className={`flex items-center gap-3 px-2 py-1.5 rounded-md text-sm font-medium transition-colors ${
-        active
-          ? "bg-primary/10 text-primary"
-          : "text-muted-foreground hover:text-foreground hover:bg-muted"
-      }`}
-    >
-      {accentColor ? (
-        <div
-          className="w-2 h-2 rounded-full"
-          style={{ backgroundColor: accentColor }}
-        />
-      ) : (
-        icon
-      )}
-      <span className="truncate">{label}</span>
-    </Link>
   );
 }

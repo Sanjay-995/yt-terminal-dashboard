@@ -1,9 +1,23 @@
 import React from "react";
-import { formatCompact, formatCurrency, formatPercent } from "@/lib/formatters";
+import {
+  formatCompact,
+  formatCurrency,
+  formatPercent,
+  formatDate,
+  isMissing,
+  NO_DATA,
+} from "@/lib/formatters";
 
 export function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload || payload.length === 0) return null;
   const isDark = document.documentElement.classList.contains("dark");
+
+  // Format the label as a real date when it looks like one — otherwise pass
+  // through. The raw API string ("2026-04-12") is not human-friendly.
+  const displayLabel =
+    typeof label === "string" && /^\d{4}-\d{2}-\d{2}/.test(label)
+      ? formatDate(label, "EEE, MMM d")
+      : label;
 
   return (
     <div
@@ -14,10 +28,11 @@ export function CustomTooltip({ active, payload, label }: any) {
         border: `1px solid ${isDark ? "rgba(255,255,255,0.1)" : "#e0e0e0"}`,
         color: isDark ? "#f3f4f6" : "#1a1a1a",
         fontSize: "13px",
+        fontFamily: "var(--app-font-mono, monospace)",
         boxShadow: isDark
           ? "0 4px 12px rgba(0,0,0,0.6)"
           : "0 4px 6px rgba(0,0,0,0.1)",
-        minWidth: "160px",
+        minWidth: "180px",
       }}
     >
       <div
@@ -44,19 +59,28 @@ export function CustomTooltip({ active, payload, label }: any) {
               }}
             />
           )}
-        {label}
+        {displayLabel}
       </div>
       {payload.map((entry: any, index: number) => {
-        let displayValue = entry.value;
-        if (typeof entry.value === "number") {
+        let displayValue: string;
+        if (isMissing(entry.value)) {
+          displayValue = NO_DATA;
+        } else if (typeof entry.value === "number") {
           const nameLower = (entry.name ?? "").toLowerCase();
           if (nameLower.includes("revenue")) {
             displayValue = formatCurrency(entry.value);
-          } else if (nameLower.includes("rate") || nameLower.includes("engagement")) {
+          } else if (
+            nameLower.includes("rate") ||
+            nameLower.includes("engagement")
+          ) {
             displayValue = formatPercent(entry.value);
+          } else if (entry.value >= 10_000) {
+            displayValue = formatCompact(entry.value);
           } else {
             displayValue = entry.value.toLocaleString();
           }
+        } else {
+          displayValue = String(entry.value);
         }
 
         return (

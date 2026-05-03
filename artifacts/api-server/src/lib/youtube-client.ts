@@ -11,12 +11,24 @@ interface TokenData {
 
 let _tokens: TokenData | null = null;
 
+/**
+ * IDs of YouTube channels that the connected OAuth account owns and therefore
+ * has Analytics API access to. Populated lazily by getOwnedChannelIds() and
+ * cleared on disconnect / token refresh failure.
+ */
+let _ownedChannelIds: Set<string> | null = null;
+let _ownedChannelIdsFetchedAt = 0;
+const OWNED_CACHE_TTL_MS = 5 * 60_000;
+
 export function setTokens(data: TokenData): void {
   _tokens = data;
+  _ownedChannelIds = null;
 }
 
 export function clearTokens(): void {
   _tokens = null;
+  _ownedChannelIds = null;
+  _ownedChannelIdsFetchedAt = 0;
 }
 
 export function isConnected(): boolean {
@@ -136,6 +148,31 @@ export async function getChannelByHandle(handle: string): Promise<YouTubeChannel
   };
 }
 
+/**
+ * Return the set of YouTube channel IDs we have Analytics API access to via
+ * the current OAuth grant. These are the channels owned by the OAuth account.
+ *
+ * Cached for OWNED_CACHE_TTL_MS to keep request latency down. Returns an
+ * empty set when not connected or on lookup failure.
+ */
+export async function getOwnedChannelIds(): Promise<Set<string>> {
+  if (!_tokens) return new Set();
+  const now = Date.now();
+  if (_ownedChannelIds && now - _ownedChannelIdsFetchedAt < OWNED_CACHE_TTL_MS) {
+    return _ownedChannelIds;
+  }
+  try {
+    const channels = await getMyChannels();
+    _ownedChannelIds = new Set(channels.map((c) => c.id));
+    _ownedChannelIdsFetchedAt = now;
+    return _ownedChannelIds;
+  } catch {
+    // Don't poison the cache on a transient error; return empty so callers
+    // honestly degrade rather than fabricating Analytics access.
+    return _ownedChannelIds ?? new Set();
+  }
+}
+
 export async function getMyChannels(): Promise<YouTubeChannel[]> {
   const token = await getAccessToken();
 
@@ -184,7 +221,18 @@ function isoDurationToDisplay(iso: string): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+// Small TTL cache for Analytics API responses. /overview, /overview/trends,
+// and per-channel /metrics can each ask for similar (channel, days) tuples
+// in quick succession — without this each one would round-trip to Google.
+const METRICS_TTL_MS = 5 * 60_000;
+const _metricsCache = new Map<string, { value: DailyMetric[]; at: number }>();
+
 export async function getRealMetrics(ytChannelId: string, days: number): Promise<DailyMetric[]> {
+  const cacheKey = `${ytChannelId}:${days}`;
+  const cached = _metricsCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < METRICS_TTL_MS) {
+    return cached.value;
+  }
   const token = await getAccessToken();
 
   const end = new Date();
@@ -219,7 +267,7 @@ export async function getRealMetrics(ytChannelId: string, days: number): Promise
   const headers = (data.columnHeaders ?? []).map((h) => h.name);
   const rows = data.rows ?? [];
 
-  return rows.map((row) => {
+  const result: DailyMetric[] = rows.map((row) => {
     const col = (name: string): number => {
       const idx = headers.indexOf(name);
       return idx >= 0 ? Number(row[idx]) : 0;
@@ -248,6 +296,95 @@ export async function getRealMetrics(ytChannelId: string, days: number): Promise
       estimatedRevenue: Math.round(col("estimatedRevenue") * 100) / 100,
     };
   });
+
+  _metricsCache.set(cacheKey, { value: result, at: Date.now() });
+  return result;
+}
+
+/**
+ * Fetch recent video aggregate stats for ANY public channel via the Data API.
+ *
+ * Works for every imported channel (no per-brand OAuth needed) because the
+ * /videos endpoint returns publicly visible counters under our app's OAuth
+ * token. Returns null when the channel has no uploads or the call errors so
+ * callers can render "—" rather than fabricate.
+ *
+ * `engagementRate` is (likes + comments) / views averaged across `sampleSize`
+ * most recent uploads, expressed as a percentage with one decimal.
+ */
+export interface RecentVideoStats {
+  videoCount: number;
+  totalViews: number;
+  totalLikes: number;
+  totalComments: number;
+  /** Percentage with one decimal, e.g. 4.2 for 4.2%. Null when no views. */
+  engagementRate: number | null;
+}
+
+export async function getRecentVideoStats(
+  ytChannelId: string,
+  sampleSize = 10,
+): Promise<RecentVideoStats | null> {
+  const token = await getAccessToken();
+
+  // Step 1: Get uploads playlist ID
+  const chResp = await fetch(
+    `https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=${ytChannelId}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (!chResp.ok) return null;
+
+  const chData = await chResp.json() as {
+    items?: Array<{ contentDetails: { relatedPlaylists: { uploads: string } } }>;
+  };
+  const uploadsId = chData.items?.[0]?.contentDetails.relatedPlaylists.uploads;
+  if (!uploadsId) return null;
+
+  // Step 2: Recent video IDs
+  const plResp = await fetch(
+    `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&playlistId=${uploadsId}&maxResults=${Math.min(sampleSize, 50)}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (!plResp.ok) return null;
+
+  const plData = await plResp.json() as {
+    items?: Array<{ contentDetails: { videoId: string } }>;
+  };
+  const videoIds = (plData.items ?? []).map((i) => i.contentDetails.videoId).filter(Boolean);
+  if (videoIds.length === 0) return null;
+
+  // Step 3: Stats per video
+  const vResp = await fetch(
+    `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoIds.join(",")}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (!vResp.ok) return null;
+
+  const vData = await vResp.json() as {
+    items?: Array<{
+      statistics: { viewCount?: string; likeCount?: string; commentCount?: string };
+    }>;
+  };
+
+  let totalViews = 0;
+  let totalLikes = 0;
+  let totalComments = 0;
+  for (const v of vData.items ?? []) {
+    totalViews += parseInt(v.statistics.viewCount ?? "0", 10);
+    totalLikes += parseInt(v.statistics.likeCount ?? "0", 10);
+    totalComments += parseInt(v.statistics.commentCount ?? "0", 10);
+  }
+
+  return {
+    videoCount: vData.items?.length ?? 0,
+    totalViews,
+    totalLikes,
+    totalComments,
+    engagementRate:
+      totalViews > 0
+        ? Math.round(((totalLikes + totalComments) / totalViews) * 1000) / 10
+        : null,
+  };
 }
 
 export async function getRealVideos(

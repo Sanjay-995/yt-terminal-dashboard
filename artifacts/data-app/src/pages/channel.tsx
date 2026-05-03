@@ -35,12 +35,14 @@ import { CustomTooltip } from "@/components/dashboard/charts";
 import {
   CHART_COLORS,
   formatCompact,
-  formatCurrency,
   formatPercent,
   formatDate,
+  isMissing,
+  deriveAccent,
+  formatNumber,
 } from "@/lib/formatters";
 import { CSVLink } from "react-csv";
-import { Download, AlertCircle } from "lucide-react";
+import { Download, AlertCircle, ExternalLink, Lock } from "lucide-react";
 import { VideoTable } from "@/components/dashboard/video-table";
 
 function getDarkPref(): boolean {
@@ -77,7 +79,7 @@ export function ChannelPage() {
         queryKey: getGetChannelMetricsQueryKey(channelId || "", { days }),
         enabled: !!channelId,
       },
-    }
+    },
   );
   const videosQuery = useGetChannelVideos(
     channelId || "",
@@ -87,15 +89,16 @@ export function ChannelPage() {
         queryKey: getGetChannelVideosQueryKey(channelId || "", {}),
         enabled: !!channelId,
       },
-    }
+    },
   );
 
-  // Use isLoading (no data) for skeleton states — isFetching is for background refreshes
   const isInitialLoading =
     channelsQuery.isLoading || metricsQuery.isLoading || videosQuery.isLoading;
 
   const isBusy =
-    channelsQuery.isFetching || metricsQuery.isFetching || videosQuery.isFetching;
+    channelsQuery.isFetching ||
+    metricsQuery.isFetching ||
+    videosQuery.isFetching;
 
   const hasError =
     metricsQuery.isError || videosQuery.isError || channelsQuery.isError;
@@ -110,19 +113,77 @@ export function ChannelPage() {
     });
   };
 
-  // Compute views total for the selected period from daily metrics
-  const totalViewsForPeriod = useMemo(
-    () => metricsQuery.data?.reduce((sum, d) => sum + d.views, 0) ?? 0,
-    [metricsQuery.data]
+  // ── Derive flags about what data is real ────────────────────────────────
+  const metricsData = metricsQuery.data ?? [];
+
+  // Sum that returns null if every entry is null (vs 0 when all entries are 0).
+  const sumNullable = (key: keyof (typeof metricsData)[number]) => {
+    if (metricsData.length === 0) return null;
+    let total = 0;
+    let anyValue = false;
+    for (const d of metricsData) {
+      const v = (d as unknown as Record<string, unknown>)[key as string];
+      if (v === null || v === undefined) continue;
+      anyValue = true;
+      total += Number(v);
+    }
+    return anyValue ? total : null;
+  };
+
+  const totalViewsForPeriod = useMemo(() => sumNullable("views"), [
+    metricsData,
+  ]);
+  const totalRevenueForPeriod = useMemo(
+    () => sumNullable("estimatedRevenue"),
+    [metricsData],
+  );
+  const totalSubsGainedForPeriod = useMemo(
+    () => sumNullable("subscribers"),
+    [metricsData],
   );
 
-  // Average engagement from metrics period
   const avgEngagementForPeriod = useMemo(() => {
-    const data = metricsQuery.data;
-    if (!data || data.length === 0) return activeChannel?.engagementRate ?? 0;
-    const sum = data.reduce((s, d) => s + d.engagementRate, 0);
-    return Math.round((sum / data.length) * 10) / 10;
-  }, [metricsQuery.data, activeChannel]);
+    if (metricsData.length === 0) return null;
+    let sum = 0;
+    let count = 0;
+    for (const d of metricsData) {
+      if (!isMissing(d.engagementRate)) {
+        sum += d.engagementRate as number;
+        count++;
+      }
+    }
+    return count > 0 ? Math.round((sum / count) * 10) / 10 : null;
+  }, [metricsData]);
+
+  // Does this channel have ANY meaningful time-series data?
+  const hasTimeSeries = useMemo(
+    () =>
+      metricsData.some(
+        (d) =>
+          (d.views ?? 0) > 0 ||
+          (d.subscribers ?? 0) > 0 ||
+          (d.estimatedRevenue ?? 0) > 0,
+      ),
+    [metricsData],
+  );
+
+  // Distinguish "has revenue data" from "has zero revenue across the period".
+  const hasRevenueSignal = useMemo(
+    () =>
+      metricsData.some((d) => (d.estimatedRevenue ?? 0) > 0) ||
+      metricsData.some((d) => !isMissing(d.estimatedRevenue)),
+    [metricsData],
+  );
+
+  const channelEmpty =
+    !!activeChannel &&
+    (activeChannel.totalVideos ?? 0) === 0 &&
+    (activeChannel.subscribers ?? 0) === 0 &&
+    (activeChannel.totalViews ?? 0) === 0;
+
+  const accent = activeChannel
+    ? deriveAccent(activeChannel.name, activeChannel.avatarColor)
+    : CHART_COLORS.blue;
 
   const gridColor = isDark ? "rgba(255,255,255,0.06)" : "#e5e5e5";
   const tickColor = isDark ? "#88888b" : "#71717a";
@@ -138,37 +199,62 @@ export function ChannelPage() {
   return (
     <div className="min-h-screen bg-background px-4 py-6 md:px-8">
       <div className="max-w-[1600px] mx-auto space-y-6">
-
         {/* Header */}
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-4">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 min-w-0">
             {isInitialLoading && !activeChannel ? (
-              <Skeleton className="w-16 h-16 rounded-lg" />
+              <Skeleton className="w-14 h-14 rounded-lg" />
             ) : (
               <div
-                className="w-16 h-16 rounded-xl flex items-center justify-center text-2xl font-bold text-white shadow-lg"
-                style={{
-                  backgroundColor:
-                    activeChannel?.avatarColor || CHART_COLORS.blue,
-                }}
+                className={`w-14 h-14 rounded-xl flex items-center justify-center text-xl font-bold text-white shadow-lg shrink-0 ${
+                  channelEmpty ? "opacity-60 grayscale" : ""
+                }`}
+                style={{ backgroundColor: accent }}
               >
-                {activeChannel?.name?.charAt(0) || "C"}
+                {activeChannel?.name?.replace(/^@/, "").charAt(0)?.toUpperCase() ||
+                  "C"}
               </div>
             )}
-            <div>
+            <div className="min-w-0">
               {isInitialLoading && !activeChannel ? (
                 <Skeleton className="h-8 w-48 mb-2" />
               ) : (
-                <h1 className="text-3xl font-bold tracking-tight">
-                  {activeChannel?.name}
-                </h1>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h1 className="text-[26px] font-bold tracking-tight truncate">
+                    {activeChannel?.name}
+                  </h1>
+                  {activeChannel?.url && (
+                    <a
+                      href={activeChannel.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-muted-foreground hover:text-foreground transition-colors"
+                      aria-label="Open on YouTube"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                  {channelEmpty && (
+                    <span className="text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                      No Activity
+                    </span>
+                  )}
+                </div>
               )}
               {isInitialLoading && !activeChannel ? (
                 <Skeleton className="h-4 w-32" />
               ) : (
-                <p className="text-muted-foreground mt-1 text-sm font-mono">
-                  {activeChannel?.handle} •{" "}
-                  {formatCompact(activeChannel?.subscribers || 0)} subs
+                <p className="text-muted-foreground mt-1 text-[12px] font-mono">
+                  {activeChannel?.handle}
+                  {!isMissing(activeChannel?.subscribers) && (
+                    <>
+                      <span className="mx-1.5 text-muted-foreground/50">·</span>
+                      <span className="tabular-nums">
+                        {formatNumber(activeChannel?.subscribers)} subscriber
+                        {(activeChannel?.subscribers ?? 0) === 1 ? "" : "s"}
+                      </span>
+                    </>
+                  )}
                 </p>
               )}
               <LastRefreshed updatedAt={metricsQuery.dataUpdatedAt} />
@@ -195,60 +281,77 @@ export function ChannelPage() {
           </div>
         )}
 
-        {/* KPIs */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KPICard
-            title={`${days || 30}d Views`}
-            value={
-              metricsQuery.data
-                ? formatCompact(totalViewsForPeriod)
-                : activeChannel
-                ? formatCompact(activeChannel.totalViews)
-                : "--"
-            }
-            change={activeChannel?.viewsGrowth30d}
-            loading={isInitialLoading}
-          />
-          <KPICard
-            title={`${days || 30}d Avg Engagement`}
-            value={
-              metricsQuery.data
-                ? formatPercent(avgEngagementForPeriod)
-                : activeChannel
-                ? formatPercent(activeChannel.engagementRate)
-                : "--"
-            }
-            loading={isInitialLoading}
-          />
-          <KPICard
-            title="Avg Views/Video"
-            value={
-              activeChannel
-                ? formatCompact(activeChannel.avgViewsPerVideo)
-                : "--"
-            }
-            loading={isInitialLoading}
-          />
-          <KPICard
-            title="Total Videos"
-            value={activeChannel?.totalVideos.toLocaleString() || "--"}
-            loading={isInitialLoading}
-          />
-        </div>
+        {/* Empty channel — show a single, deliberate empty state instead of
+            a wall of zeroed cards and flat charts. */}
+        {!isInitialLoading && channelEmpty && (
+          <EmptyChannelState channelName={activeChannel?.name ?? ""} />
+        )}
 
-        {/* Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Views Area */}
-          <Card className="shadcn-card bg-card lg:col-span-2">
-            <CardHeader className="px-5 pt-5 pb-2 flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-base font-semibold tracking-tight">
-                Daily Views
-              </CardTitle>
-              {!isInitialLoading &&
-                metricsQuery.data &&
-                metricsQuery.data.length > 0 && (
+        {/* KPIs — only render when there's something to show. We pick which
+            ones are surfaced based on whether the underlying data is real. */}
+        {!channelEmpty && (
+          <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-3">
+            <KPICard
+              title={`${days || 30}d Views`}
+              value={
+                hasTimeSeries
+                  ? formatCompact(totalViewsForPeriod)
+                  : formatCompact(activeChannel?.totalViews)
+              }
+              tone="primary"
+              provenance={
+                hasTimeSeries ? "live" : isMissing(activeChannel?.totalViews) ? "unavailable" : "public"
+              }
+              hint={
+                hasTimeSeries
+                  ? "Daily views from Analytics API"
+                  : "Lifetime total — daily Analytics not connected"
+              }
+              loading={isInitialLoading}
+            />
+            <KPICard
+              title={`${days || 30}d Subs Gained`}
+              value={formatCompact(totalSubsGainedForPeriod)}
+              provenance={hasTimeSeries ? "live" : "unavailable"}
+              loading={isInitialLoading}
+            />
+            <KPICard
+              title="Avg Engagement"
+              value={formatPercent(avgEngagementForPeriod)}
+              provenance={
+                avgEngagementForPeriod !== null ? "live" : "unavailable"
+              }
+              hint={
+                avgEngagementForPeriod === null
+                  ? "Connect Analytics for this channel"
+                  : undefined
+              }
+              loading={isInitialLoading}
+            />
+            <KPICard
+              title="Total Videos"
+              value={formatNumber(activeChannel?.totalVideos)}
+              provenance={
+                isMissing(activeChannel?.totalVideos) ? "unavailable" : "public"
+              }
+              loading={isInitialLoading}
+            />
+          </div>
+        )}
+
+        {/* Charts — hide entirely when empty. Otherwise show only the panels
+            with real data; gracefully empty-state the rest. */}
+        {!channelEmpty && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Daily Views */}
+            <Card className="shadcn-card bg-card lg:col-span-2">
+              <CardHeader className="px-5 pt-5 pb-2 flex-row items-center justify-between space-y-0">
+                <CardTitle className="text-[15px] font-semibold tracking-tight">
+                  Daily Views
+                </CardTitle>
+                {!isInitialLoading && hasTimeSeries && (
                   <CSVLink
-                    data={metricsQuery.data}
+                    data={metricsData}
                     filename={`${activeChannel?.handle}-views.csv`}
                     className="print:hidden flex items-center justify-center w-[26px] h-[26px] rounded-[6px] transition-colors hover:bg-muted"
                     aria-label="Export CSV"
@@ -256,100 +359,93 @@ export function ChannelPage() {
                     <Download className="w-3.5 h-3.5 text-muted-foreground" />
                   </CSVLink>
                 )}
-            </CardHeader>
-            <CardContent className="p-5 pt-2">
-              {isInitialLoading ? (
-                <Skeleton className="w-full h-[260px]" />
-              ) : (
-                <ResponsiveContainer width="100%" height={260} debounce={0}>
-                  <AreaChart data={metricsQuery.data}>
-                    <defs>
-                      <linearGradient
-                        id="gradientMetricsViews"
-                        x1="0"
-                        y1="0"
-                        x2="0"
-                        y2="1"
-                      >
-                        <stop
-                          offset="0%"
-                          stopColor={
-                            activeChannel?.avatarColor || CHART_COLORS.blue
-                          }
-                          stopOpacity={0.4}
-                        />
-                        <stop
-                          offset="100%"
-                          stopColor={
-                            activeChannel?.avatarColor || CHART_COLORS.blue
-                          }
-                          stopOpacity={0.01}
-                        />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      stroke={gridColor}
-                      vertical={false}
-                    />
-                    <XAxis
-                      dataKey="date"
-                      tickFormatter={(d) => formatDate(d)}
-                      tick={{ fontSize: 11, fill: tickColor }}
-                      stroke={tickColor}
-                      tickMargin={8}
-                      minTickGap={20}
-                    />
-                    <YAxis
-                      tickFormatter={formatCompact}
-                      tick={{ fontSize: 11, fill: tickColor }}
-                      stroke={tickColor}
-                      tickMargin={8}
-                      width={45}
-                    />
-                    <Tooltip
-                      content={<CustomTooltip />}
-                      isAnimationActive={false}
-                      cursor={{
-                        fill: isDark
-                          ? "rgba(255,255,255,0.05)"
-                          : "rgba(0,0,0,0.05)",
-                        stroke: "none",
-                      }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="views"
-                      name="Views"
-                      fill="url(#gradientMetricsViews)"
-                      stroke={activeChannel?.avatarColor || CHART_COLORS.blue}
-                      fillOpacity={1}
-                      strokeWidth={2}
-                      isAnimationActive={false}
-                      activeDot={{
-                        r: 4,
-                        strokeWidth: 0,
-                        fill: activeChannel?.avatarColor || CHART_COLORS.blue,
-                      }}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              )}
-            </CardContent>
-          </Card>
+              </CardHeader>
+              <CardContent className="p-5 pt-2">
+                {isInitialLoading ? (
+                  <Skeleton className="w-full h-[260px]" />
+                ) : !hasTimeSeries ? (
+                  <ChartEmptyState
+                    height={260}
+                    icon={<Lock className="w-4 h-4" />}
+                    message="No daily Analytics for this channel"
+                    hint="Connect this channel's brand account in Settings to see daily views, subs, watch time, and revenue."
+                  />
+                ) : (
+                  <ResponsiveContainer width="100%" height={260} debounce={0}>
+                    <AreaChart data={metricsData}>
+                      <defs>
+                        <linearGradient
+                          id="gradientMetricsViews"
+                          x1="0"
+                          y1="0"
+                          x2="0"
+                          y2="1"
+                        >
+                          <stop offset="0%" stopColor={accent} stopOpacity={0.4} />
+                          <stop
+                            offset="100%"
+                            stopColor={accent}
+                            stopOpacity={0.01}
+                          />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke={gridColor}
+                        vertical={false}
+                      />
+                      <XAxis
+                        dataKey="date"
+                        tickFormatter={(d) => formatDate(d)}
+                        tick={{ fontSize: 11, fill: tickColor }}
+                        stroke={tickColor}
+                        tickMargin={8}
+                        minTickGap={20}
+                      />
+                      <YAxis
+                        tickFormatter={formatCompact}
+                        tick={{ fontSize: 11, fill: tickColor }}
+                        stroke={tickColor}
+                        tickMargin={8}
+                        width={45}
+                      />
+                      <Tooltip
+                        content={<CustomTooltip />}
+                        isAnimationActive={false}
+                        cursor={{
+                          fill: isDark
+                            ? "rgba(255,255,255,0.05)"
+                            : "rgba(0,0,0,0.05)",
+                          stroke: "none",
+                        }}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="views"
+                        name="Views"
+                        fill="url(#gradientMetricsViews)"
+                        stroke={accent}
+                        fillOpacity={1}
+                        strokeWidth={2}
+                        isAnimationActive={false}
+                        activeDot={{ r: 4, strokeWidth: 0, fill: accent }}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                )}
+              </CardContent>
+            </Card>
 
-          <div className="space-y-6 flex flex-col">
-            {/* Subs Line */}
-            <Card className="shadcn-card bg-card flex-1">
-              <CardHeader className="px-5 pt-5 pb-2 flex-row items-center justify-between space-y-0">
-                <CardTitle className="text-sm font-semibold tracking-tight">
-                  Daily Subs Gained
-                </CardTitle>
-                {!isInitialLoading &&
-                  metricsQuery.data &&
-                  metricsQuery.data.length > 0 && (
+            <div className="space-y-6 flex flex-col">
+              {/* Subs */}
+              <Card className="shadcn-card bg-card flex-1">
+                <CardHeader className="px-5 pt-5 pb-2 flex-row items-center justify-between space-y-0">
+                  <CardTitle className="text-sm font-semibold tracking-tight">
+                    Daily Subs Gained
+                  </CardTitle>
+                  {!isInitialLoading && hasTimeSeries && (
                     <CSVLink
-                      data={metricsQuery.data}
+                      data={metricsData}
                       filename={`${activeChannel?.handle}-subs.csv`}
                       className="print:hidden flex items-center justify-center w-[22px] h-[22px] rounded-[4px] transition-colors hover:bg-muted"
                       aria-label="Export CSV"
@@ -357,69 +453,69 @@ export function ChannelPage() {
                       <Download className="w-3 h-3 text-muted-foreground" />
                     </CSVLink>
                   )}
-              </CardHeader>
-              <CardContent className="p-5 pt-2">
-                {isInitialLoading ? (
-                  <Skeleton className="w-full h-[120px]" />
-                ) : (
-                  <ResponsiveContainer width="100%" height={120} debounce={0}>
-                    <LineChart data={metricsQuery.data}>
-                      <CartesianGrid
-                        strokeDasharray="3 3"
-                        stroke={gridColor}
-                        vertical={false}
-                      />
-                      <XAxis
-                        dataKey="date"
-                        tickFormatter={(d) => formatDate(d, "MMM d")}
-                        tick={{ fontSize: 10, fill: tickColor }}
-                        stroke={tickColor}
-                        tickMargin={8}
-                        minTickGap={20}
-                      />
-                      <YAxis
-                        tickFormatter={formatCompact}
-                        tick={{ fontSize: 10, fill: tickColor }}
-                        stroke={tickColor}
-                        tickMargin={8}
-                        width={35}
-                      />
-                      <Tooltip
-                        content={<CustomTooltip />}
-                        isAnimationActive={false}
-                        cursor={{ stroke: tickColor, strokeDasharray: "3 3" }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="subscribers"
-                        name="Subs"
-                        stroke={CHART_COLORS.purple}
-                        strokeWidth={2}
-                        dot={false}
-                        isAnimationActive={false}
-                        activeDot={{
-                          r: 3,
-                          strokeWidth: 0,
-                          fill: CHART_COLORS.purple,
-                        }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                )}
-              </CardContent>
-            </Card>
+                </CardHeader>
+                <CardContent className="p-5 pt-2">
+                  {isInitialLoading ? (
+                    <Skeleton className="w-full h-[120px]" />
+                  ) : !hasTimeSeries ? (
+                    <ChartEmptyState height={120} compact message="—" />
+                  ) : (
+                    <ResponsiveContainer width="100%" height={120} debounce={0}>
+                      <LineChart data={metricsData}>
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          stroke={gridColor}
+                          vertical={false}
+                        />
+                        <XAxis
+                          dataKey="date"
+                          tickFormatter={(d) => formatDate(d, "MMM d")}
+                          tick={{ fontSize: 10, fill: tickColor }}
+                          stroke={tickColor}
+                          tickMargin={8}
+                          minTickGap={20}
+                        />
+                        <YAxis
+                          tickFormatter={formatCompact}
+                          tick={{ fontSize: 10, fill: tickColor }}
+                          stroke={tickColor}
+                          tickMargin={8}
+                          width={35}
+                        />
+                        <Tooltip
+                          content={<CustomTooltip />}
+                          isAnimationActive={false}
+                          cursor={{ stroke: tickColor, strokeDasharray: "3 3" }}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="subscribers"
+                          name="Subs"
+                          stroke={CHART_COLORS.purple}
+                          strokeWidth={2}
+                          dot={false}
+                          isAnimationActive={false}
+                          activeDot={{
+                            r: 3,
+                            strokeWidth: 0,
+                            fill: CHART_COLORS.purple,
+                          }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
+                </CardContent>
+              </Card>
 
-            {/* Revenue Bar */}
-            <Card className="shadcn-card bg-card flex-1">
-              <CardHeader className="px-5 pt-5 pb-2 flex-row items-center justify-between space-y-0">
-                <CardTitle className="text-sm font-semibold tracking-tight">
-                  Est. Revenue
-                </CardTitle>
-                {!isInitialLoading &&
-                  metricsQuery.data &&
-                  metricsQuery.data.length > 0 && (
+              {/* Revenue */}
+              <Card className="shadcn-card bg-card flex-1">
+                <CardHeader className="px-5 pt-5 pb-2 flex-row items-center justify-between space-y-0">
+                  <CardTitle className="text-sm font-semibold tracking-tight">
+                    Est. Revenue
+                  </CardTitle>
+                  {!isInitialLoading && hasRevenueSignal && (
                     <CSVLink
-                      data={metricsQuery.data}
+                      data={metricsData}
                       filename={`${activeChannel?.handle}-revenue.csv`}
                       className="print:hidden flex items-center justify-center w-[22px] h-[22px] rounded-[4px] transition-colors hover:bg-muted"
                       aria-label="Export CSV"
@@ -427,76 +523,150 @@ export function ChannelPage() {
                       <Download className="w-3 h-3 text-muted-foreground" />
                     </CSVLink>
                   )}
-              </CardHeader>
-              <CardContent className="p-5 pt-2">
-                {isInitialLoading ? (
-                  <Skeleton className="w-full h-[120px]" />
-                ) : (
-                  <ResponsiveContainer width="100%" height={120} debounce={0}>
-                    <BarChart data={metricsQuery.data}>
-                      <CartesianGrid
-                        strokeDasharray="3 3"
-                        stroke={gridColor}
-                        vertical={false}
-                      />
-                      <XAxis
-                        dataKey="date"
-                        tickFormatter={(d) => formatDate(d, "MMM d")}
-                        tick={{ fontSize: 10, fill: tickColor }}
-                        stroke={tickColor}
-                        tickMargin={8}
-                        minTickGap={20}
-                      />
-                      <YAxis
-                        tickFormatter={(v) => `$${formatCompact(v)}`}
-                        tick={{ fontSize: 10, fill: tickColor }}
-                        stroke={tickColor}
-                        tickMargin={8}
-                        width={35}
-                      />
-                      <Tooltip
-                        content={<CustomTooltip />}
-                        isAnimationActive={false}
-                        cursor={false}
-                      />
-                      <Bar
-                        dataKey="estimatedRevenue"
-                        name="Revenue"
-                        fill={CHART_COLORS.green}
-                        fillOpacity={0.8}
-                        radius={[2, 2, 0, 0]}
-                        isAnimationActive={false}
-                        activeBar={{ fillOpacity: 1 }}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
-              </CardContent>
-            </Card>
+                </CardHeader>
+                <CardContent className="p-5 pt-2">
+                  {isInitialLoading ? (
+                    <Skeleton className="w-full h-[120px]" />
+                  ) : !hasRevenueSignal ? (
+                    <ChartEmptyState
+                      height={120}
+                      compact
+                      message="No monetization data"
+                    />
+                  ) : (totalRevenueForPeriod ?? 0) === 0 ? (
+                    <div className="w-full h-[120px] flex items-center justify-center">
+                      <p className="text-xs text-muted-foreground">
+                        $0 across this period
+                      </p>
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={120} debounce={0}>
+                      <BarChart data={metricsData}>
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          stroke={gridColor}
+                          vertical={false}
+                        />
+                        <XAxis
+                          dataKey="date"
+                          tickFormatter={(d) => formatDate(d, "MMM d")}
+                          tick={{ fontSize: 10, fill: tickColor }}
+                          stroke={tickColor}
+                          tickMargin={8}
+                          minTickGap={20}
+                        />
+                        <YAxis
+                          tickFormatter={(v) => `$${formatCompact(v)}`}
+                          tick={{ fontSize: 10, fill: tickColor }}
+                          stroke={tickColor}
+                          tickMargin={8}
+                          width={35}
+                        />
+                        <Tooltip
+                          content={<CustomTooltip />}
+                          isAnimationActive={false}
+                          cursor={false}
+                        />
+                        <Bar
+                          dataKey="estimatedRevenue"
+                          name="Revenue"
+                          fill={CHART_COLORS.green}
+                          fillOpacity={0.8}
+                          radius={[2, 2, 0, 0]}
+                          isAnimationActive={false}
+                          activeBar={{ fillOpacity: 1 }}
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Video Table */}
-        <Card className="shadcn-card bg-card">
-          <CardHeader className="px-5 pt-5 pb-2">
-            <CardTitle className="text-base font-semibold tracking-tight">
-              Top Performing Videos
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-5 pt-2">
-            {isInitialLoading ? (
-              <div className="space-y-3">
-                <Skeleton className="h-8 w-64 mb-4" />
-                {[...Array(6)].map((_, i) => (
-                  <Skeleton key={i} className="h-12 w-full" />
-                ))}
-              </div>
-            ) : (
-              <VideoTable data={videosQuery.data || []} />
-            )}
-          </CardContent>
-        </Card>
+        {!channelEmpty && (
+          <Card className="shadcn-card bg-card">
+            <CardHeader className="px-5 pt-5 pb-2">
+              <CardTitle className="text-[15px] font-semibold tracking-tight">
+                Recent Videos
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-5 pt-2">
+              {isInitialLoading ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-8 w-64 mb-4" />
+                  {[...Array(6)].map((_, i) => (
+                    <Skeleton key={i} className="h-12 w-full" />
+                  ))}
+                </div>
+              ) : (
+                <VideoTable
+                  data={videosQuery.data || []}
+                  accent={accent}
+                />
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
+    </div>
+  );
+}
+
+function EmptyChannelState({ channelName }: { channelName: string }) {
+  return (
+    <div className="border border-dashed border-border rounded-lg p-10 flex flex-col items-center justify-center text-center gap-3">
+      <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+        <Lock className="w-4 h-4 text-muted-foreground" />
+      </div>
+      <div className="space-y-1">
+        <p className="text-base font-semibold text-foreground">
+          {channelName} hasn't published anything yet
+        </p>
+        <p className="text-sm text-muted-foreground max-w-md">
+          0 subscribers, 0 videos, 0 views. There's nothing to chart until this
+          channel posts content. Once it does, refresh to populate.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function ChartEmptyState({
+  message,
+  hint,
+  icon,
+  height = 260,
+  compact = false,
+}: {
+  message: string;
+  hint?: string;
+  icon?: React.ReactNode;
+  height?: number;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className="w-full flex flex-col items-center justify-center gap-2 border border-dashed border-border rounded-md"
+      style={{ height }}
+    >
+      {icon && (
+        <div className="text-muted-foreground/70 mb-1">{icon}</div>
+      )}
+      <p
+        className={`font-medium text-foreground ${
+          compact ? "text-xs" : "text-sm"
+        }`}
+      >
+        {message}
+      </p>
+      {hint && !compact && (
+        <p className="text-xs text-muted-foreground max-w-xs text-center px-4">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }

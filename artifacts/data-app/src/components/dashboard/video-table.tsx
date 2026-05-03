@@ -9,14 +9,34 @@ import {
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { formatCompact, formatDate, formatPercent } from "@/lib/formatters";
+import {
+  formatCompact,
+  formatDate,
+  formatPercent,
+  formatNumber,
+  isMissing,
+} from "@/lib/formatters";
 import type { VideoRow } from "@workspace/api-client-react";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
-export function VideoTable({ data }: { data: VideoRow[] }) {
+export function VideoTable({
+  data,
+  accent,
+}: {
+  data: VideoRow[];
+  /** Optional accent color used for thumbnail placeholders. */
+  accent?: string;
+}) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
 
@@ -24,48 +44,96 @@ export function VideoTable({ data }: { data: VideoRow[] }) {
     {
       accessorKey: "title",
       header: "Video",
-      cell: ({ row }) => (
-        <div className="flex items-center gap-3">
-          <div 
-            className="w-12 h-8 rounded shrink-0" 
-            style={{ backgroundColor: row.original.thumbnailColor || "#333" }} 
-          />
-          <div>
-            <p className="font-medium text-[13px] leading-tight line-clamp-1 max-w-[200px] text-foreground">{row.original.title}</p>
-            <p className="text-[11px] text-muted-foreground mt-0.5">{formatDate(row.original.publishedAt)}</p>
+      cell: ({ row }) => {
+        // Backend currently returns "#FF0000" for every thumbnailColor — fall
+        // back to the channel accent so titles aren't all flagged red.
+        // TODO: needs API field `thumbnailUrl` to render real thumbnails.
+        const swatch =
+          row.original.thumbnailColor &&
+          row.original.thumbnailColor.toLowerCase() !== "#ff0000"
+            ? row.original.thumbnailColor
+            : accent || "#3f3f46";
+        return (
+          <div className="flex items-center gap-3">
+            <div
+              className="w-12 h-8 rounded shrink-0 opacity-80"
+              style={{ backgroundColor: swatch }}
+            />
+            <div className="min-w-0">
+              <p className="font-medium text-[13px] leading-tight line-clamp-1 max-w-[260px] text-foreground">
+                {row.original.title}
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-0.5 font-mono">
+                {formatDate(row.original.publishedAt)}
+                {row.original.duration ? (
+                  <>
+                    <span className="mx-1.5 text-muted-foreground/50">·</span>
+                    {row.original.duration}
+                  </>
+                ) : null}
+              </p>
+            </div>
           </div>
-        </div>
-      ),
+        );
+      },
     },
     {
       accessorKey: "views",
       header: ({ column }) => <SortableHeader column={column} title="Views" />,
-      cell: ({ row }) => <span className="font-mono text-xs">{row.original.views.toLocaleString()}</span>,
+      cell: ({ row }) => (
+        <NumCell value={row.original.views} format="full" />
+      ),
     },
     {
       accessorKey: "likes",
       header: ({ column }) => <SortableHeader column={column} title="Likes" />,
-      cell: ({ row }) => <span className="font-mono text-xs">{formatCompact(row.original.likes)}</span>,
+      cell: ({ row }) => (
+        <NumCell value={row.original.likes} format="compact" />
+      ),
     },
     {
       accessorKey: "comments",
-      header: ({ column }) => <SortableHeader column={column} title="Comments" />,
-      cell: ({ row }) => <span className="font-mono text-xs">{formatCompact(row.original.comments)}</span>,
+      header: ({ column }) => (
+        <SortableHeader column={column} title="Comments" />
+      ),
+      cell: ({ row }) => (
+        <NumCell value={row.original.comments} format="compact" />
+      ),
     },
     {
       accessorKey: "watchTimeHours",
-      header: ({ column }) => <SortableHeader column={column} title="Watch Time" />,
-      cell: ({ row }) => <span className="font-mono text-xs">{row.original.watchTimeHours.toLocaleString()}h</span>,
+      header: ({ column }) => (
+        <SortableHeader column={column} title="Watch Time" />
+      ),
+      cell: ({ row }) => {
+        const v = row.original.watchTimeHours;
+        return (
+          <span
+            className={`font-mono text-xs tabular-nums ${
+              isMissing(v) ? "text-muted-foreground/50" : ""
+            }`}
+          >
+            {isMissing(v) ? "—" : `${(v as number).toLocaleString()}h`}
+          </span>
+        );
+      },
     },
     {
       accessorKey: "engagementRate",
-      header: ({ column }) => <SortableHeader column={column} title="Engagement" />,
-      cell: ({ row }) => <span className="font-mono text-xs">{formatPercent(row.original.engagementRate)}</span>,
-    },
-    {
-      accessorKey: "duration",
-      header: "Length",
-      cell: ({ row }) => <span className="text-xs text-muted-foreground">{row.original.duration}</span>,
+      header: ({ column }) => (
+        <SortableHeader column={column} title="Engagement" />
+      ),
+      cell: ({ row }) => (
+        <span
+          className={`font-mono text-xs tabular-nums ${
+            isMissing(row.original.engagementRate)
+              ? "text-muted-foreground/50"
+              : ""
+          }`}
+        >
+          {formatPercent(row.original.engagementRate)}
+        </span>
+      ),
     },
   ];
 
@@ -82,11 +150,19 @@ export function VideoTable({ data }: { data: VideoRow[] }) {
     initialState: { pagination: { pageSize: 10 } },
   });
 
+  if (data.length === 0) {
+    return (
+      <div className="border border-dashed border-border rounded-md py-10 text-center text-sm text-muted-foreground">
+        No videos to show.
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <Input
-          placeholder="Search videos..."
+          placeholder="Search videos…"
           value={globalFilter}
           onChange={(e) => setGlobalFilter(e.target.value)}
           className="max-w-xs h-8 text-xs bg-muted/50 border-border"
@@ -97,10 +173,19 @@ export function VideoTable({ data }: { data: VideoRow[] }) {
         <Table>
           <TableHeader className="bg-muted/30">
             {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id} className="hover:bg-transparent border-border">
+              <TableRow
+                key={headerGroup.id}
+                className="hover:bg-transparent border-border"
+              >
                 {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id} className="h-9 text-xs font-semibold text-muted-foreground whitespace-nowrap">
-                    {flexRender(header.column.columnDef.header, header.getContext())}
+                  <TableHead
+                    key={header.id}
+                    className="h-9 text-[11px] font-semibold text-muted-foreground whitespace-nowrap uppercase tracking-wider"
+                  >
+                    {flexRender(
+                      header.column.columnDef.header,
+                      header.getContext(),
+                    )}
                   </TableHead>
                 ))}
               </TableRow>
@@ -109,18 +194,27 @@ export function VideoTable({ data }: { data: VideoRow[] }) {
           <TableBody>
             {table.getRowModel().rows.length > 0 ? (
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} className="border-border hover:bg-muted/30">
+                <TableRow
+                  key={row.id}
+                  className="border-border hover:bg-muted/30"
+                >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id} className="py-2.5">
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      {flexRender(
+                        cell.column.columnDef.cell,
+                        cell.getContext(),
+                      )}
                     </TableCell>
                   ))}
                 </TableRow>
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={columns.length} className="h-24 text-center text-sm text-muted-foreground">
-                  No videos found.
+                <TableCell
+                  colSpan={columns.length}
+                  className="h-24 text-center text-sm text-muted-foreground"
+                >
+                  No videos match your search.
                 </TableCell>
               </TableRow>
             )}
@@ -128,32 +222,83 @@ export function VideoTable({ data }: { data: VideoRow[] }) {
         </Table>
       </div>
 
-      <div className="flex items-center justify-between">
-        <div className="text-xs text-muted-foreground">
-          Showing {table.getState().pagination.pageIndex * table.getState().pagination.pageSize + 1} to{" "}
-          {Math.min((table.getState().pagination.pageIndex + 1) * table.getState().pagination.pageSize, table.getFilteredRowModel().rows.length)}{" "}
-          of {table.getFilteredRowModel().rows.length} results
+      {table.getFilteredRowModel().rows.length > 10 && (
+        <div className="flex items-center justify-between">
+          <div className="text-xs text-muted-foreground font-mono tabular-nums">
+            Showing{" "}
+            {table.getState().pagination.pageIndex *
+              table.getState().pagination.pageSize +
+              1}
+            –
+            {Math.min(
+              (table.getState().pagination.pageIndex + 1) *
+                table.getState().pagination.pageSize,
+              table.getFilteredRowModel().rows.length,
+            )}{" "}
+            of {table.getFilteredRowModel().rows.length}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs px-2.5"
+              onClick={() => table.previousPage()}
+              disabled={!table.getCanPreviousPage()}
+            >
+              Prev
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs px-2.5"
+              onClick={() => table.nextPage()}
+              disabled={!table.getCanNextPage()}
+            >
+              Next
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-1.5">
-          <Button variant="outline" size="sm" className="h-7 text-xs px-2.5" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>Prev</Button>
-          <Button variant="outline" size="sm" className="h-7 text-xs px-2.5" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>Next</Button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
 
-function SortableHeader({ column, title }: { column: any, title: string }) {
+function NumCell({
+  value,
+  format,
+}: {
+  value: number | null | undefined;
+  format: "full" | "compact";
+}) {
+  if (isMissing(value)) {
+    return <span className="font-mono text-xs text-muted-foreground/50">—</span>;
+  }
   return (
-    <div 
-      className="flex items-center gap-1.5 cursor-pointer select-none group" 
+    <span className="font-mono text-xs tabular-nums">
+      {format === "full" ? formatNumber(value) : formatCompact(value)}
+    </span>
+  );
+}
+
+function SortableHeader({
+  column,
+  title,
+}: {
+  column: any;
+  title: string;
+}) {
+  return (
+    <div
+      className="flex items-center gap-1.5 cursor-pointer select-none group"
       onClick={column.getToggleSortingHandler()}
     >
       {title}
       {{
         asc: <ArrowUp className="w-3 h-3 text-foreground" />,
         desc: <ArrowDown className="w-3 h-3 text-foreground" />,
-      }[column.getIsSorted() as string] ?? <ArrowUpDown className="w-3 h-3 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />}
+      }[column.getIsSorted() as string] ?? (
+        <ArrowUpDown className="w-3 h-3 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />
+      )}
     </div>
   );
 }

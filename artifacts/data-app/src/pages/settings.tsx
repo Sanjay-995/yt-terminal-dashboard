@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Pencil, Trash2, Plus, ExternalLink, CheckCircle2, XCircle, RefreshCw, Zap, Youtube, LogOut, Download } from "lucide-react";
+import { deriveAccent } from "@/lib/formatters";
 
 const PRESET_COLORS = [
   "#FF0000", "#FFC107", "#E91E63", "#4CAF50", "#9C27B0",
@@ -407,9 +408,9 @@ export function SettingsPage() {
                       <div key={ch.id} className="flex items-center gap-4 px-4 py-3.5 hover:bg-muted/30 transition-colors">
                         <div
                           className="w-10 h-10 rounded-lg flex items-center justify-center text-base font-bold text-white shrink-0"
-                          style={{ backgroundColor: ch.avatarColor }}
+                          style={{ backgroundColor: deriveAccent(ch.name, ch.avatarColor) }}
                         >
-                          {ch.name.charAt(0)}
+                          {ch.name.replace(/^@/, "").charAt(0).toUpperCase()}
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">

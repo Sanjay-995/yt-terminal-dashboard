@@ -314,6 +314,13 @@ components:
 
     ChannelSummary:
       type: object
+      description: |
+        Public stats (subscribers, totalViews, totalVideos) come from the
+        YouTube Data API and are real for every imported channel. Per-channel
+        time-windowed metrics (subscriberGrowth30d, viewsGrowth30d) require
+        per-brand OAuth and are null for channels we can't authenticate. The
+        engagementRate is computed from real recent video stats via the Data
+        API and is non-null whenever recent videos exist.
       properties:
         id:
           type: string
@@ -335,14 +342,21 @@ components:
           type: integer
         totalWatchTimeHours:
           type: number
+          nullable: true
         avgViewsPerVideo:
           type: integer
+        hasAnalyticsAccess:
+          type: boolean
+          description: True when a per-brand OAuth token is available for this channel and the Analytics API can be queried for time-windowed metrics.
         subscriberGrowth30d:
           type: integer
+          nullable: true
         viewsGrowth30d:
           type: number
+          nullable: true
         engagementRate:
           type: number
+          nullable: true
       required:
         - id
         - name
@@ -352,11 +366,8 @@ components:
         - subscribers
         - totalViews
         - totalVideos
-        - totalWatchTimeHours
         - avgViewsPerVideo
-        - subscriberGrowth30d
-        - viewsGrowth30d
-        - engagementRate
+        - hasAnalyticsAccess
 
     CreateChannelRequest:
       type: object
@@ -483,41 +494,62 @@ components:
 
     OverviewStats:
       type: object
+      description: |
+        Aggregated KPI totals across tracked channels. totalSubscribers is the
+        real sum of public subscriber counts. The 30D windowed totals
+        (totalViews30d, totalWatchTimeHours30d, totalEstimatedRevenue30d) and
+        the growth deltas (subscriberGrowth30d, viewsGrowth30d,
+        revenueGrowth30d) are summed/computed only across channels that have
+        Analytics API access via OAuth — they are null when no channel is
+        connected. avgEngagementRate is computed from real recent video stats
+        across all imported channels via the Data API.
       properties:
         totalSubscribers:
           type: integer
         totalViews30d:
           type: integer
+          nullable: true
         totalWatchTimeHours30d:
           type: number
+          nullable: true
         totalEstimatedRevenue30d:
           type: number
+          nullable: true
         avgEngagementRate:
           type: number
+          nullable: true
         subscriberGrowth30d:
           type: integer
+          nullable: true
         viewsGrowth30d:
           type: number
+          nullable: true
         revenueGrowth30d:
           type: number
+          nullable: true
         topChannelByViews:
           type: string
+          nullable: true
         topChannelByGrowth:
           type: string
+          nullable: true
+        oauthChannelCount:
+          type: integer
+          description: Number of tracked channels with per-brand OAuth (Analytics API access).
+        totalChannelCount:
+          type: integer
+          description: Total number of tracked channels.
       required:
         - totalSubscribers
-        - totalViews30d
-        - totalWatchTimeHours30d
-        - totalEstimatedRevenue30d
-        - avgEngagementRate
-        - subscriberGrowth30d
-        - viewsGrowth30d
-        - revenueGrowth30d
-        - topChannelByViews
-        - topChannelByGrowth
+        - oauthChannelCount
+        - totalChannelCount
 
     TrendPoint:
       type: object
+      description: |
+        A single day of aggregated metrics across OAuth-connected channels.
+        Only real Analytics API data is ever included. If no channels have
+        OAuth access, /overview/trends returns an empty array.
       properties:
         date:
           type: string

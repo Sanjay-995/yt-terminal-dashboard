@@ -32,22 +32,31 @@ export const GetPlatformsResponse = zod.array(GetPlatformsResponseItem);
  * Returns all channels with summary stats
  * @summary List all tracked channels
  */
-export const GetChannelsResponseItem = zod.object({
-  id: zod.string(),
-  name: zod.string(),
-  handle: zod.string(),
-  platform: zod.string(),
-  url: zod.string().optional(),
-  avatarColor: zod.string(),
-  subscribers: zod.number(),
-  totalViews: zod.number(),
-  totalVideos: zod.number(),
-  totalWatchTimeHours: zod.number(),
-  avgViewsPerVideo: zod.number(),
-  subscriberGrowth30d: zod.number(),
-  viewsGrowth30d: zod.number(),
-  engagementRate: zod.number(),
-});
+export const GetChannelsResponseItem = zod
+  .object({
+    id: zod.string(),
+    name: zod.string(),
+    handle: zod.string(),
+    platform: zod.string(),
+    url: zod.string().optional(),
+    avatarColor: zod.string(),
+    subscribers: zod.number(),
+    totalViews: zod.number(),
+    totalVideos: zod.number(),
+    totalWatchTimeHours: zod.number().nullish(),
+    avgViewsPerVideo: zod.number(),
+    hasAnalyticsAccess: zod
+      .boolean()
+      .describe(
+        "True when a per-brand OAuth token is available for this channel and the Analytics API can be queried for time-windowed metrics.",
+      ),
+    subscriberGrowth30d: zod.number().nullish(),
+    viewsGrowth30d: zod.number().nullish(),
+    engagementRate: zod.number().nullish(),
+  })
+  .describe(
+    "Public stats (subscribers, totalViews, totalVideos) come from the\nYouTube Data API and are real for every imported channel. Per-channel\ntime-windowed metrics (subscriberGrowth30d, viewsGrowth30d) require\nper-brand OAuth and are null for channels we can't authenticate. The\nengagementRate is computed from real recent video stats via the Data\nAPI and is non-null whenever recent videos exist.\n",
+  );
 export const GetChannelsResponse = zod.array(GetChannelsResponseItem);
 
 /**
@@ -71,22 +80,31 @@ export const GetChannelParams = zod.object({
   channelId: zod.coerce.string(),
 });
 
-export const GetChannelResponse = zod.object({
-  id: zod.string(),
-  name: zod.string(),
-  handle: zod.string(),
-  platform: zod.string(),
-  url: zod.string().optional(),
-  avatarColor: zod.string(),
-  subscribers: zod.number(),
-  totalViews: zod.number(),
-  totalVideos: zod.number(),
-  totalWatchTimeHours: zod.number(),
-  avgViewsPerVideo: zod.number(),
-  subscriberGrowth30d: zod.number(),
-  viewsGrowth30d: zod.number(),
-  engagementRate: zod.number(),
-});
+export const GetChannelResponse = zod
+  .object({
+    id: zod.string(),
+    name: zod.string(),
+    handle: zod.string(),
+    platform: zod.string(),
+    url: zod.string().optional(),
+    avatarColor: zod.string(),
+    subscribers: zod.number(),
+    totalViews: zod.number(),
+    totalVideos: zod.number(),
+    totalWatchTimeHours: zod.number().nullish(),
+    avgViewsPerVideo: zod.number(),
+    hasAnalyticsAccess: zod
+      .boolean()
+      .describe(
+        "True when a per-brand OAuth token is available for this channel and the Analytics API can be queried for time-windowed metrics.",
+      ),
+    subscriberGrowth30d: zod.number().nullish(),
+    viewsGrowth30d: zod.number().nullish(),
+    engagementRate: zod.number().nullish(),
+  })
+  .describe(
+    "Public stats (subscribers, totalViews, totalVideos) come from the\nYouTube Data API and are real for every imported channel. Per-channel\ntime-windowed metrics (subscriberGrowth30d, viewsGrowth30d) require\nper-brand OAuth and are null for channels we can't authenticate. The\nengagementRate is computed from real recent video stats via the Data\nAPI and is non-null whenever recent videos exist.\n",
+  );
 
 /**
  * @summary Update a channel
@@ -106,22 +124,31 @@ export const UpdateChannelBody = zod.object({
   totalVideos: zod.number().optional(),
 });
 
-export const UpdateChannelResponse = zod.object({
-  id: zod.string(),
-  name: zod.string(),
-  handle: zod.string(),
-  platform: zod.string(),
-  url: zod.string().optional(),
-  avatarColor: zod.string(),
-  subscribers: zod.number(),
-  totalViews: zod.number(),
-  totalVideos: zod.number(),
-  totalWatchTimeHours: zod.number(),
-  avgViewsPerVideo: zod.number(),
-  subscriberGrowth30d: zod.number(),
-  viewsGrowth30d: zod.number(),
-  engagementRate: zod.number(),
-});
+export const UpdateChannelResponse = zod
+  .object({
+    id: zod.string(),
+    name: zod.string(),
+    handle: zod.string(),
+    platform: zod.string(),
+    url: zod.string().optional(),
+    avatarColor: zod.string(),
+    subscribers: zod.number(),
+    totalViews: zod.number(),
+    totalVideos: zod.number(),
+    totalWatchTimeHours: zod.number().nullish(),
+    avgViewsPerVideo: zod.number(),
+    hasAnalyticsAccess: zod
+      .boolean()
+      .describe(
+        "True when a per-brand OAuth token is available for this channel and the Analytics API can be queried for time-windowed metrics.",
+      ),
+    subscriberGrowth30d: zod.number().nullish(),
+    viewsGrowth30d: zod.number().nullish(),
+    engagementRate: zod.number().nullish(),
+  })
+  .describe(
+    "Public stats (subscribers, totalViews, totalVideos) come from the\nYouTube Data API and are real for every imported channel. Per-channel\ntime-windowed metrics (subscriberGrowth30d, viewsGrowth30d) require\nper-brand OAuth and are null for channels we can't authenticate. The\nengagementRate is computed from real recent video stats via the Data\nAPI and is non-null whenever recent videos exist.\n",
+  );
 
 /**
  * @summary Remove a channel from tracking
@@ -196,18 +223,30 @@ export const GetChannelVideosResponse = zod.array(GetChannelVideosResponseItem);
  * Returns KPI totals across all channels for the last 30 days
  * @summary Get aggregated overview stats
  */
-export const GetOverviewResponse = zod.object({
-  totalSubscribers: zod.number(),
-  totalViews30d: zod.number(),
-  totalWatchTimeHours30d: zod.number(),
-  totalEstimatedRevenue30d: zod.number(),
-  avgEngagementRate: zod.number(),
-  subscriberGrowth30d: zod.number(),
-  viewsGrowth30d: zod.number(),
-  revenueGrowth30d: zod.number(),
-  topChannelByViews: zod.string(),
-  topChannelByGrowth: zod.string(),
-});
+export const GetOverviewResponse = zod
+  .object({
+    totalSubscribers: zod.number(),
+    totalViews30d: zod.number().nullish(),
+    totalWatchTimeHours30d: zod.number().nullish(),
+    totalEstimatedRevenue30d: zod.number().nullish(),
+    avgEngagementRate: zod.number().nullish(),
+    subscriberGrowth30d: zod.number().nullish(),
+    viewsGrowth30d: zod.number().nullish(),
+    revenueGrowth30d: zod.number().nullish(),
+    topChannelByViews: zod.string().nullish(),
+    topChannelByGrowth: zod.string().nullish(),
+    oauthChannelCount: zod
+      .number()
+      .describe(
+        "Number of tracked channels with per-brand OAuth (Analytics API access).",
+      ),
+    totalChannelCount: zod
+      .number()
+      .describe("Total number of tracked channels."),
+  })
+  .describe(
+    "Aggregated KPI totals across tracked channels. totalSubscribers is the\nreal sum of public subscriber counts. The 30D windowed totals\n(totalViews30d, totalWatchTimeHours30d, totalEstimatedRevenue30d) and\nthe growth deltas (subscriberGrowth30d, viewsGrowth30d,\nrevenueGrowth30d) are summed\/computed only across channels that have\nAnalytics API access via OAuth — they are null when no channel is\nconnected. avgEngagementRate is computed from real recent video stats\nacross all imported channels via the Data API.\n",
+  );
 
 /**
  * Returns aggregated daily metrics across all channels
@@ -219,13 +258,17 @@ export const GetOverviewTrendsQueryParams = zod.object({
   days: zod.coerce.number().default(getOverviewTrendsQueryDaysDefault),
 });
 
-export const GetOverviewTrendsResponseItem = zod.object({
-  date: zod.string(),
-  totalViews: zod.number(),
-  totalSubscribers: zod.number(),
-  totalWatchTimeHours: zod.number(),
-  totalRevenue: zod.number(),
-});
+export const GetOverviewTrendsResponseItem = zod
+  .object({
+    date: zod.string(),
+    totalViews: zod.number(),
+    totalSubscribers: zod.number(),
+    totalWatchTimeHours: zod.number(),
+    totalRevenue: zod.number(),
+  })
+  .describe(
+    "A single day of aggregated metrics across OAuth-connected channels.\nOnly real Analytics API data is ever included. If no channels have\nOAuth access, \/overview\/trends returns an empty array.\n",
+  );
 export const GetOverviewTrendsResponse = zod.array(
   GetOverviewTrendsResponseItem,
 );

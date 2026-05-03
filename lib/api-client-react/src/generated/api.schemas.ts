@@ -21,6 +21,15 @@ export interface Platform {
   supportsRevenue: boolean;
 }
 
+/**
+ * Public stats (subscribers, totalViews, totalVideos) come from the
+YouTube Data API and are real for every imported channel. Per-channel
+time-windowed metrics (subscriberGrowth30d, viewsGrowth30d) require
+per-brand OAuth and are null for channels we can't authenticate. The
+engagementRate is computed from real recent video stats via the Data
+API and is non-null whenever recent videos exist.
+
+ */
 export interface ChannelSummary {
   id: string;
   name: string;
@@ -31,11 +40,13 @@ export interface ChannelSummary {
   subscribers: number;
   totalViews: number;
   totalVideos: number;
-  totalWatchTimeHours: number;
+  totalWatchTimeHours?: number | null;
   avgViewsPerVideo: number;
-  subscriberGrowth30d: number;
-  viewsGrowth30d: number;
-  engagementRate: number;
+  /** True when a per-brand OAuth token is available for this channel and the Analytics API can be queried for time-windowed metrics. */
+  hasAnalyticsAccess: boolean;
+  subscriberGrowth30d?: number | null;
+  viewsGrowth30d?: number | null;
+  engagementRate?: number | null;
 }
 
 export interface CreateChannelRequest {
@@ -90,19 +101,40 @@ export interface VideoRow {
   thumbnailColor: string;
 }
 
+/**
+ * Aggregated KPI totals across tracked channels. totalSubscribers is the
+real sum of public subscriber counts. The 30D windowed totals
+(totalViews30d, totalWatchTimeHours30d, totalEstimatedRevenue30d) and
+the growth deltas (subscriberGrowth30d, viewsGrowth30d,
+revenueGrowth30d) are summed/computed only across channels that have
+Analytics API access via OAuth — they are null when no channel is
+connected. avgEngagementRate is computed from real recent video stats
+across all imported channels via the Data API.
+
+ */
 export interface OverviewStats {
   totalSubscribers: number;
-  totalViews30d: number;
-  totalWatchTimeHours30d: number;
-  totalEstimatedRevenue30d: number;
-  avgEngagementRate: number;
-  subscriberGrowth30d: number;
-  viewsGrowth30d: number;
-  revenueGrowth30d: number;
-  topChannelByViews: string;
-  topChannelByGrowth: string;
+  totalViews30d?: number | null;
+  totalWatchTimeHours30d?: number | null;
+  totalEstimatedRevenue30d?: number | null;
+  avgEngagementRate?: number | null;
+  subscriberGrowth30d?: number | null;
+  viewsGrowth30d?: number | null;
+  revenueGrowth30d?: number | null;
+  topChannelByViews?: string | null;
+  topChannelByGrowth?: string | null;
+  /** Number of tracked channels with per-brand OAuth (Analytics API access). */
+  oauthChannelCount: number;
+  /** Total number of tracked channels. */
+  totalChannelCount: number;
 }
 
+/**
+ * A single day of aggregated metrics across OAuth-connected channels.
+Only real Analytics API data is ever included. If no channels have
+OAuth access, /overview/trends returns an empty array.
+
+ */
 export interface TrendPoint {
   date: string;
   totalViews: number;

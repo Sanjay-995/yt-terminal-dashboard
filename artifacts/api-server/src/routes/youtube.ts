@@ -9,8 +9,10 @@ import {
   isConnected,
   getRealMetrics,
   getRealVideos,
+  getOwnedChannelIds,
+  getRecentVideoStats,
 } from "../lib/youtube-client";
-import type { YouTubeChannel } from "../lib/youtube-client";
+import type { YouTubeChannel, DailyMetric } from "../lib/youtube-client";
 
 const router: IRouter = Router();
 
@@ -28,6 +30,12 @@ const PLATFORMS = [
 ];
 
 // ─── Channel store ────────────────────────────────────────────────────────────
+//
+// All time-windowed metrics (subscriberGrowth30d, viewsGrowth30d,
+// engagementRate, totalWatchTimeHours) are NULL by default. They are filled
+// only by code paths that have a real source (Analytics API for OAuth'd
+// channels, Data API recent video stats for engagementRate). We never
+// fabricate a placeholder number — null tells the UI to render "—".
 
 interface Channel {
   id: string;
@@ -39,100 +47,25 @@ interface Channel {
   subscribers: number;
   totalViews: number;
   totalVideos: number;
-  totalWatchTimeHours: number;
+  totalWatchTimeHours: number | null;
   avgViewsPerVideo: number;
-  subscriberGrowth30d: number;
-  viewsGrowth30d: number;
-  engagementRate: number;
+  subscriberGrowth30d: number | null;
+  viewsGrowth30d: number | null;
+  engagementRate: number | null;
   youtubeChannelId?: string; // set for channels linked to real YouTube data
 }
 
-let channels: Channel[] = [
-  {
-    id: "ch_mkbhd",
-    name: "MKBHD",
-    handle: "@mkbhd",
-    platform: "youtube",
-    url: "https://youtube.com/@mkbhd",
-    avatarColor: "#FF0000",
-    subscribers: 18_400_000,
-    totalViews: 4_200_000_000,
-    totalVideos: 1_720,
-    totalWatchTimeHours: 310_000_000,
-    avgViewsPerVideo: 2_441_860,
-    subscriberGrowth30d: 85_000,
-    viewsGrowth30d: 4.2,
-    engagementRate: 3.8,
-  },
-  {
-    id: "ch_linus",
-    name: "Linus Tech Tips",
-    handle: "@linustechtips",
-    platform: "youtube",
-    url: "https://youtube.com/@linustechtips",
-    avatarColor: "#FFC107",
-    subscribers: 15_200_000,
-    totalViews: 5_800_000_000,
-    totalVideos: 6_200,
-    totalWatchTimeHours: 420_000_000,
-    avgViewsPerVideo: 935_484,
-    subscriberGrowth30d: 42_000,
-    viewsGrowth30d: 2.9,
-    engagementRate: 2.9,
-  },
-  {
-    id: "ch_verge",
-    name: "The Verge",
-    handle: "@theverge",
-    platform: "youtube",
-    url: "https://youtube.com/@theverge",
-    avatarColor: "#E91E63",
-    subscribers: 3_600_000,
-    totalViews: 820_000_000,
-    totalVideos: 4_800,
-    totalWatchTimeHours: 52_000_000,
-    avgViewsPerVideo: 170_833,
-    subscriberGrowth30d: 9_200,
-    viewsGrowth30d: 1.8,
-    engagementRate: 2.1,
-  },
-  {
-    id: "ch_ifixit",
-    name: "iFixit",
-    handle: "@ifixit",
-    platform: "youtube",
-    url: "https://youtube.com/@ifixit",
-    avatarColor: "#4CAF50",
-    subscribers: 4_100_000,
-    totalViews: 1_100_000_000,
-    totalVideos: 1_200,
-    totalWatchTimeHours: 78_000_000,
-    avgViewsPerVideo: 916_667,
-    subscriberGrowth30d: 15_000,
-    viewsGrowth30d: 3.1,
-    engagementRate: 4.2,
-  },
-  {
-    id: "ch_gamers",
-    name: "GamersNexus",
-    handle: "@gamersnexus",
-    platform: "youtube",
-    url: "https://youtube.com/@gamersnexus",
-    avatarColor: "#9C27B0",
-    subscribers: 3_900_000,
-    totalViews: 980_000_000,
-    totalVideos: 2_400,
-    totalWatchTimeHours: 88_000_000,
-    avgViewsPerVideo: 408_333,
-    subscriberGrowth30d: 22_000,
-    viewsGrowth30d: 5.4,
-    engagementRate: 5.1,
-  },
-];
+// No mock seed channels. The dashboard starts empty and is populated by
+// the OAuth flow / handle-import endpoint with real public stats.
+let channels: Channel[] = [];
 
 /**
  * Add or update a channel imported from a real YouTube account.
  * Exported so the OAuth route can call it without circular imports.
+ *
+ * Public stats (subscribers, totalViews, totalVideos) are real for every
+ * imported channel. Time-windowed fields stay null — we fill them only when
+ * Analytics API or Data API recent-video sampling can produce real numbers.
  */
 export function addOrUpdateYouTubeChannel(ytCh: YouTubeChannel): Channel {
   const existing = channels.findIndex((c) => c.youtubeChannelId === ytCh.id);
@@ -147,12 +80,12 @@ export function addOrUpdateYouTubeChannel(ytCh: YouTubeChannel): Channel {
     subscribers: ytCh.subscribers,
     totalViews: ytCh.totalViews,
     totalVideos: ytCh.totalVideos,
-    totalWatchTimeHours: Math.round(ytCh.totalViews * 0.07),
+    totalWatchTimeHours: null, // requires Analytics API; null until/unless filled
     avgViewsPerVideo:
       ytCh.totalVideos > 0 ? Math.round(ytCh.totalViews / ytCh.totalVideos) : 0,
-    subscriberGrowth30d: Math.round(ytCh.subscribers * 0.005),
-    viewsGrowth30d: 2.5,
-    engagementRate: 3.0,
+    subscriberGrowth30d: null,
+    viewsGrowth30d: null,
+    engagementRate: null,
     youtubeChannelId: ytCh.id,
   };
 
@@ -238,100 +171,112 @@ function validateUpdate(body: unknown): UpdateChannelBody {
   return out;
 }
 
-// ─── Generated-data fallbacks ─────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function generateDailyMetrics(channelId: string, days: number) {
-  const ch = channels.find((c) => c.id === channelId);
-  const baseViews = ch ? Math.round((ch.totalViews / 365) * (0.9 + Math.random() * 0.2)) : 100_000;
-  const baseSubs = ch ? Math.round(ch.subscriberGrowth30d / 30) : 500;
-  const baseRevenue = ch ? Math.round(ch.totalViews * 0.000002 * 30) : 400;
-
-  const overrides: Record<string, { baseViews: number; baseSubs: number; baseRevenue: number }> = {
-    ch_mkbhd:  { baseViews: 900_000, baseSubs: 2_800, baseRevenue: 3_600 },
-    ch_linus:  { baseViews: 600_000, baseSubs: 1_400, baseRevenue: 2_400 },
-    ch_verge:  { baseViews: 85_000,  baseSubs: 310,   baseRevenue: 340 },
-    ch_ifixit: { baseViews: 120_000, baseSubs: 500,   baseRevenue: 480 },
-    ch_gamers: { baseViews: 180_000, baseSubs: 730,   baseRevenue: 720 },
+/**
+ * Decorate a stored Channel with the per-request hasAnalyticsAccess flag,
+ * which depends on the live OAuth state (whether the connected account owns
+ * this YouTube channel ID).
+ */
+function decorate(ch: Channel, ownedIds: Set<string>) {
+  return {
+    ...ch,
+    hasAnalyticsAccess: !!ch.youtubeChannelId && ownedIds.has(ch.youtubeChannelId),
   };
-
-  const seed = overrides[channelId] ?? { baseViews, baseSubs, baseRevenue };
-  const result = [];
-  const now = new Date();
-
-  for (let i = days - 1; i >= 0; i--) {
-    const date = new Date(now);
-    date.setDate(date.getDate() - i);
-    const day = date.getDay();
-    const isWeekend = day === 0 || day === 6;
-    const weekendBoost = isWeekend ? 1.3 : 1.0;
-    const trend = 1 + (days - i) * 0.003;
-    const noise = () => 0.7 + Math.random() * 0.6;
-
-    const views = Math.round(seed.baseViews * weekendBoost * trend * noise());
-    const likes = Math.round(views * 0.035 * noise());
-    const comments = Math.round(views * 0.005 * noise());
-    const shares = Math.round(views * 0.008 * noise());
-    const watchTimeHours = Math.round(views * 0.04 * noise() * 10) / 10;
-    const subscribers = Math.round(seed.baseSubs * weekendBoost * trend * noise());
-    const engagementRate = Math.round(((likes + comments + shares) / views) * 1000) / 10;
-    const estimatedRevenue = Math.round(seed.baseRevenue * trend * noise() * 100) / 100;
-
-    result.push({
-      date: date.toISOString().split("T")[0],
-      views,
-      subscribers,
-      watchTimeHours,
-      likes,
-      comments,
-      shares,
-      engagementRate,
-      estimatedRevenue,
-    });
-  }
-
-  return result;
 }
 
-function generateVideos(channelId: string, limit: number) {
-  const ch = channels.find((c) => c.id === channelId);
-  const color = ch?.avatarColor ?? "#555";
+/**
+ * Fetch real engagement rate for a channel from recent video stats. Cached
+ * in-memory for ENGAGEMENT_TTL_MS to avoid hammering the Data API on every
+ * /overview request. Returns null when no OAuth token, no uploads, or on
+ * upstream error — never a fabricated value.
+ */
+const ENGAGEMENT_TTL_MS = 10 * 60_000;
+const _engagementCache = new Map<string, { value: number | null; at: number }>();
 
-  const videoTemplates: Record<string, string[]> = {
-    ch_mkbhd: ["Every iPhone 17 Question Answered","The Best Android Phone of 2025","Galaxy S25 Ultra Full Review","Tesla Cybertruck — 6 Months Later","The Most Expensive Tech I've Ever Reviewed","Pixel 9 Pro vs iPhone 16 Pro","I Bought Every Apple Vision Pro Accessory","The Truth About Folding Phones in 2025","MacBook Pro M4 Max — Is It Worth $4,000?","OnePlus 13 Review: Back in the Game","The Best Budget Phone Under $300","Windows on ARM is Finally Good","Xiaomi 15 Ultra Blind Test","AI Cameras Are Getting Scary Good","Nothing Phone 3 — First Look","Why I Switched Back to Android","iPad Pro M4 vs MacBook Air — Which to Buy?","Sony Xperia vs iPhone Camera Comparison","Smartwatch Mega Showdown 2025","The Drone That Changed Everything"],
-    ch_linus: ["We Built the World's Quietest PC","RTX 5090 Benchmark Blowout","The $100,000 Server Room Makeover","AMD vs Intel 2025: No More Excuses","DDR6 RAM: Does It Actually Matter?","Buying a Used GPU in 2025 — Worth It?","The PC We Should Have Built Years Ago","Liquid Cooled PS5 Experiment","Radeon RX 9700 XT vs RTX 4080","Building the Perfect Video Editing PC","Tech I Regret Buying","Our $500 Gaming PC Challenge","Water Damaged MacBook Restoration","Inside Our 200Gbps Network Setup","The Most Efficient Gaming PC Build","Intel Fails Again — But Maybe Not?","Custom Loop Cooling on a Laptop","Thunderbolt 5 — Everything You Need to Know","Is Wi-Fi 7 Worth Upgrading For?","1000W Power Supply vs 400W — Real Difference?"],
-    ch_verge: ["The Verge Reviews: Apple's Biggest Bet Yet","Tech Companies Are Lying to You","Is This the Last Smartphone Era?","The Problem With AI in Everything","Hands On: Meta's AR Glasses","Why Your Smart Home Is a Privacy Risk","The Laptop That Does Everything Wrong","OpenAI's New Model Explained","Streaming Wars: Who's Actually Winning?","The EV That Doesn't Compromise","Google's Antitrust Problem Gets Worse","Why Apple Keeps Winning With Chips","The Best Keyboard We've Ever Tested","TikTok, the Algorithm, and You","This Camera Changed How We Make Videos","Every Major AI Announcement This Week","The Future of Search Is Broken","Samsung's Risky Galaxy Bet","5G: Still Waiting for the Revolution","How Big Tech Got So Powerful"],
-    ch_ifixit: ["iPhone 17 Teardown — First Look Inside","Galaxy S25 Ultra: Repairability Score","We Fixed a $4,000 MacBook for $80","The Most Repairable Laptop of 2025","Right to Repair: The Fight Isn't Over","Surface Pro Teardown — Nightmare Inside","How to Replace Your EV Battery","Pixel 9a Teardown: Surprisingly Good","Nintendo Switch 2 — Full Teardown","Vision Pro Lens Replacement Guide","Fixing the MacBook That Apple Abandoned","The Repairability Report Card 2025","Sony PlayStation 5 Pro Disassembly","AirPods Max Battery Replacement","This TV Was Designed to Never Be Fixed","The Cheapest Way to Upgrade Your Laptop","We Cracked Open a Folding Phone","M4 iMac Inside: What Apple Changed","Why Modular Phones Failed","Fixing 100 Dead Laptops from eBay"],
-    ch_gamers: ["RTX 5090 vs RX 9900 XTX — The Truth","Intel Arc B770 Review: Shocking Results","We Tested 50 Thermal Pastes","$2,000 vs $500 Gaming PC — Frame Time Analysis","CPU Cooler Tier List 2025","AMD vs NVIDIA: Drivers Actually Matter","Are Mini-ITX Builds Worth the Compromise?","The Most Thermally Efficient GPU Tier List","DDR6 Latency: Deep Dive Analysis","OLED vs QLED — The Real Difference","Power Consumption Reality Check: 2025 GPUs","240Hz vs 360Hz — Can You See the Difference?","Budget CPU Mega Test: 16 CPUs Ranked","The Best $200 GPU You Can Buy Right Now","PCIe 5 NVMe vs PCIe 4 — Real Workloads","Fan Curve Optimization — How to Do It Right","Case Airflow Comparison: 20 Cases Tested","Overclocking Is Dead — Or Is It?","AM5 vs LGA1851: Which Platform Ages Better?","The 1080p Build Everyone Recommends Is Wrong"],
+async function fetchEngagementRate(ytChannelId: string): Promise<number | null> {
+  const cached = _engagementCache.get(ytChannelId);
+  if (cached && Date.now() - cached.at < ENGAGEMENT_TTL_MS) {
+    return cached.value;
+  }
+  try {
+    const stats = await getRecentVideoStats(ytChannelId, 10);
+    const value = stats?.engagementRate ?? null;
+    _engagementCache.set(ytChannelId, { value, at: Date.now() });
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Compute real 30D windowed totals for the connected channel(s) by summing
+ * the daily Analytics API rows. Returns null when no channel has Analytics
+ * access or every Analytics call fails.
+ */
+async function computeRealOverviewWindow(
+  oauthChannels: Channel[],
+): Promise<{
+  totalViews30d: number;
+  totalWatchTimeHours30d: number;
+  totalEstimatedRevenue30d: number;
+  subscriberGrowth30d: number;
+  viewsGrowth30d: number | null;
+  revenueGrowth30d: number | null;
+} | null> {
+  if (oauthChannels.length === 0) return null;
+
+  // We pull 60 days so we can compute growth as last-30 vs prior-30.
+  const allMetrics: DailyMetric[][] = [];
+  for (const ch of oauthChannels) {
+    if (!ch.youtubeChannelId) continue;
+    try {
+      const m = await getRealMetrics(ch.youtubeChannelId, 60);
+      allMetrics.push(m);
+    } catch {
+      // honest skip — don't fabricate
+    }
+  }
+  if (allMetrics.length === 0) return null;
+
+  // Aggregate across channels and split into the two 30-day windows.
+  const sumWindow = (rows: DailyMetric[]) =>
+    rows.reduce(
+      (acc, r) => ({
+        views: acc.views + r.views,
+        watchTimeHours: acc.watchTimeHours + r.watchTimeHours,
+        revenue: acc.revenue + r.estimatedRevenue,
+        subs: acc.subs + r.subscribers,
+      }),
+      { views: 0, watchTimeHours: 0, revenue: 0, subs: 0 },
+    );
+
+  const last30: DailyMetric[] = [];
+  const prev30: DailyMetric[] = [];
+  for (const series of allMetrics) {
+    // Series sorted ascending by day; last `days` entries are the most recent.
+    const tail = series.slice(-30);
+    const head = series.slice(-60, -30);
+    last30.push(...tail);
+    prev30.push(...head);
+  }
+
+  const last = sumWindow(last30);
+  const prev = sumWindow(prev30);
+
+  const pctChange = (a: number, b: number): number | null => {
+    if (b <= 0) return null; // avoid /0 spikes; null = "not enough history"
+    return Math.round(((a - b) / b) * 1000) / 10;
   };
 
-  const defaultTitles = Array.from({ length: 20 }, (_, i) => `Video ${i + 1}`);
-  const titles = videoTemplates[channelId] ?? defaultTitles;
-  const now = new Date();
-
-  return titles.slice(0, limit).map((title, i) => {
-    const daysAgo = Math.floor(Math.random() * 90) + i * 2;
-    const published = new Date(now);
-    published.setDate(published.getDate() - daysAgo);
-    const views = Math.round((800_000 - i * 35_000) * (0.7 + Math.random() * 0.6));
-    const likes = Math.round(views * 0.038 * (0.8 + Math.random() * 0.4));
-    const comments = Math.round(views * 0.006 * (0.8 + Math.random() * 0.4));
-    const watchTimeHours = Math.round(views * 0.045 * (0.8 + Math.random() * 0.4) * 10) / 10;
-    const engagementRate = Math.round(((likes + comments) / views) * 1000) / 10;
-    const durationMins = 8 + Math.floor(Math.random() * 22);
-    const durationSecs = Math.floor(Math.random() * 60);
-    return {
-      id: `${channelId}_v${i}`,
-      title,
-      publishedAt: published.toISOString().split("T")[0],
-      views,
-      likes,
-      comments,
-      watchTimeHours,
-      engagementRate,
-      duration: `${durationMins}:${String(durationSecs).padStart(2, "0")}`,
-      thumbnailColor: color,
-    };
-  });
+  return {
+    totalViews30d: last.views,
+    totalWatchTimeHours30d: Math.round(last.watchTimeHours * 10) / 10,
+    totalEstimatedRevenue30d: Math.round(last.revenue * 100) / 100,
+    subscriberGrowth30d: last.subs,
+    viewsGrowth30d: pctChange(last.views, prev.views),
+    revenueGrowth30d: pctChange(last.revenue, prev.revenue),
+  };
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -341,7 +286,21 @@ router.get("/platforms", (_req, res) => {
 });
 
 router.get("/channels", async (_req, res): Promise<void> => {
-  const parsed = GetChannelsResponse.safeParse(channels);
+  const ownedIds = isConnected() ? await getOwnedChannelIds() : new Set<string>();
+
+  // Best-effort engagement rate from recent videos (real Data API call) for
+  // every linked channel. Cached so this is cheap on warm caches.
+  const decorated = await Promise.all(
+    channels.map(async (ch) => {
+      const base = decorate(ch, ownedIds);
+      if (base.engagementRate === null && base.youtubeChannelId && isConnected()) {
+        base.engagementRate = await fetchEngagementRate(base.youtubeChannelId);
+      }
+      return base;
+    }),
+  );
+
+  const parsed = GetChannelsResponse.safeParse(decorated);
   if (!parsed.success) {
     res.status(500).json({ error: "Data validation error" });
     return;
@@ -378,15 +337,15 @@ router.post("/channels", async (req, res): Promise<void> => {
     subscribers,
     totalViews,
     totalVideos,
-    totalWatchTimeHours: Math.round(totalViews * 0.07),
+    totalWatchTimeHours: null,
     avgViewsPerVideo: totalVideos > 0 ? Math.round(totalViews / totalVideos) : 0,
-    subscriberGrowth30d: Math.round(subscribers * 0.005),
-    viewsGrowth30d: 2.5,
-    engagementRate: 3.0,
+    subscriberGrowth30d: null,
+    viewsGrowth30d: null,
+    engagementRate: null,
   };
 
   channels.push(newChannel);
-  res.status(201).json(newChannel);
+  res.status(201).json({ ...newChannel, hasAnalyticsAccess: false });
 });
 
 router.get("/channels/:channelId", async (req, res): Promise<void> => {
@@ -395,7 +354,12 @@ router.get("/channels/:channelId", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Channel not found" });
     return;
   }
-  res.json(channel);
+  const ownedIds = isConnected() ? await getOwnedChannelIds() : new Set<string>();
+  const decorated = decorate(channel, ownedIds);
+  if (decorated.engagementRate === null && decorated.youtubeChannelId && isConnected()) {
+    decorated.engagementRate = await fetchEngagementRate(decorated.youtubeChannelId);
+  }
+  res.json(decorated);
 });
 
 router.patch("/channels/:channelId", async (req, res): Promise<void> => {
@@ -408,13 +372,13 @@ router.patch("/channels/:channelId", async (req, res): Promise<void> => {
   const body = validateUpdate(req.body);
   const updated = { ...channels[idx]!, ...body };
   if (body.totalViews !== undefined || body.totalVideos !== undefined) {
-    updated.totalWatchTimeHours = Math.round(updated.totalViews * 0.07);
     updated.avgViewsPerVideo =
       updated.totalVideos > 0 ? Math.round(updated.totalViews / updated.totalVideos) : 0;
   }
 
   channels[idx] = updated;
-  res.json(updated);
+  const ownedIds = isConnected() ? await getOwnedChannelIds() : new Set<string>();
+  res.json(decorate(updated, ownedIds));
 });
 
 router.delete("/channels/:channelId", async (req, res): Promise<void> => {
@@ -444,18 +408,27 @@ router.get("/channels/:channelId/metrics", async (req, res): Promise<void> => {
   const days = Number(req.query["days"] ?? 30);
   const safeDays = isNaN(days) ? 30 : days;
 
-  // Use real YouTube Analytics data when available
-  if (channel.youtubeChannelId && isConnected()) {
-    try {
-      const metrics = await getRealMetrics(channel.youtubeChannelId, safeDays);
-      res.json(metrics);
-      return;
-    } catch (e) {
-      req.log.warn({ err: e }, "YouTube Analytics fetch failed, falling back to generated data");
-    }
+  // Real Analytics API only — no synthetic fallback. When the connected
+  // OAuth account doesn't own this channel, return [] so the UI renders an
+  // empty state rather than a fabricated graph.
+  if (!channel.youtubeChannelId || !isConnected()) {
+    res.json([]);
+    return;
   }
 
-  res.json(generateDailyMetrics(params.data.channelId, safeDays));
+  const ownedIds = await getOwnedChannelIds();
+  if (!ownedIds.has(channel.youtubeChannelId)) {
+    res.json([]);
+    return;
+  }
+
+  try {
+    const metrics = await getRealMetrics(channel.youtubeChannelId, safeDays);
+    res.json(metrics);
+  } catch (e) {
+    req.log.warn({ err: e }, "YouTube Analytics fetch failed");
+    res.json([]);
+  }
 });
 
 router.get("/channels/:channelId/videos", async (req, res): Promise<void> => {
@@ -474,56 +447,112 @@ router.get("/channels/:channelId/videos", async (req, res): Promise<void> => {
   const limit = Number(req.query["limit"] ?? 20);
   const safeLimit = isNaN(limit) ? 20 : limit;
 
-  // Use real YouTube video data when available
-  if (channel.youtubeChannelId && isConnected()) {
-    try {
-      const videos = await getRealVideos(channel.youtubeChannelId, safeLimit, channel.avatarColor);
-      res.json(videos);
-      return;
-    } catch (e) {
-      req.log.warn({ err: e }, "YouTube videos fetch failed, falling back to generated data");
-    }
+  // Real Data API videos for any channel with a linked YouTube ID — works
+  // for all imported channels under our app's OAuth token. No synthetic
+  // fallback: if we can't resolve real videos, return [].
+  if (!channel.youtubeChannelId || !isConnected()) {
+    res.json([]);
+    return;
   }
 
-  res.json(generateVideos(params.data.channelId, safeLimit));
+  try {
+    const videos = await getRealVideos(channel.youtubeChannelId, safeLimit, channel.avatarColor);
+    res.json(videos);
+  } catch (e) {
+    req.log.warn({ err: e }, "YouTube videos fetch failed");
+    res.json([]);
+  }
 });
 
 router.get("/overview", async (_req, res): Promise<void> => {
-  if (channels.length === 0) {
+  const totalChannelCount = channels.length;
+  const ownedIds = isConnected() ? await getOwnedChannelIds() : new Set<string>();
+  const oauthChannels = channels.filter(
+    (c) => !!c.youtubeChannelId && ownedIds.has(c.youtubeChannelId),
+  );
+  const oauthChannelCount = oauthChannels.length;
+
+  if (totalChannelCount === 0) {
     res.json({
-      totalSubscribers: 0, totalViews30d: 0, totalWatchTimeHours30d: 0,
-      totalEstimatedRevenue30d: 0, avgEngagementRate: 0, subscriberGrowth30d: 0,
-      viewsGrowth30d: 0, revenueGrowth30d: 0, topChannelByViews: "N/A", topChannelByGrowth: "N/A",
+      totalSubscribers: 0,
+      totalViews30d: null,
+      totalWatchTimeHours30d: null,
+      totalEstimatedRevenue30d: null,
+      avgEngagementRate: null,
+      subscriberGrowth30d: null,
+      viewsGrowth30d: null,
+      revenueGrowth30d: null,
+      topChannelByViews: null,
+      topChannelByGrowth: null,
+      oauthChannelCount,
+      totalChannelCount,
     });
     return;
   }
 
-  const totals = channels.reduce(
-    (acc, ch) => ({
-      totalSubscribers: acc.totalSubscribers + ch.subscribers,
-      totalViews30d: acc.totalViews30d + Math.round(ch.totalViews * 0.007),
-      totalWatchTimeHours30d: acc.totalWatchTimeHours30d + Math.round(ch.totalWatchTimeHours * 0.006),
-      totalEstimatedRevenue30d:
-        acc.totalEstimatedRevenue30d + Math.round(ch.totalViews * 0.000002 * 100) / 100,
-      subscriberGrowth30d: acc.subscriberGrowth30d + ch.subscriberGrowth30d,
-    }),
-    { totalSubscribers: 0, totalViews30d: 0, totalWatchTimeHours30d: 0, totalEstimatedRevenue30d: 0, subscriberGrowth30d: 0 }
-  );
+  // Real subscribers sum (Data API public stat).
+  const totalSubscribers = channels.reduce((s, c) => s + c.subscribers, 0);
 
+  // Real per-channel engagement rates from recent video sampling. Only
+  // averaged across channels that returned a value — no zero-padding.
+  const engagementRates: number[] = [];
+  if (isConnected()) {
+    await Promise.all(
+      channels.map(async (c) => {
+        if (!c.youtubeChannelId) return;
+        const r = await fetchEngagementRate(c.youtubeChannelId);
+        if (r !== null) engagementRates.push(r);
+      }),
+    );
+  }
   const avgEngagementRate =
-    Math.round((channels.reduce((s, ch) => s + ch.engagementRate, 0) / channels.length) * 10) / 10;
+    engagementRates.length > 0
+      ? Math.round(
+          (engagementRates.reduce((a, b) => a + b, 0) / engagementRates.length) * 10,
+        ) / 10
+      : null;
+
+  const window = await computeRealOverviewWindow(oauthChannels);
+
+  // topChannelByViews uses real Data API totalViews — always honest.
   const topByViews = channels.reduce((a, b) => (a.totalViews > b.totalViews ? a : b));
-  const topByGrowth = channels.reduce((a, b) =>
-    a.subscriberGrowth30d > b.subscriberGrowth30d ? a : b
-  );
+
+  // topChannelByGrowth needs a real growth signal. We have it only for
+  // OAuth'd channels — and only if we have multiple. With a single OAuth'd
+  // channel it's a self-pick that misleads, so we return null then.
+  let topChannelByGrowth: string | null = null;
+  if (oauthChannels.length > 1 && window) {
+    // Re-pull per-channel last-30 subs gained to rank fairly.
+    const ranked: Array<{ name: string; gained: number }> = [];
+    for (const ch of oauthChannels) {
+      if (!ch.youtubeChannelId) continue;
+      try {
+        const m = await getRealMetrics(ch.youtubeChannelId, 30);
+        const gained = m.reduce((s, r) => s + r.subscribers, 0);
+        ranked.push({ name: ch.name, gained });
+      } catch {
+        /* skip on error */
+      }
+    }
+    if (ranked.length > 0) {
+      ranked.sort((a, b) => b.gained - a.gained);
+      topChannelByGrowth = ranked[0]!.name;
+    }
+  }
 
   res.json({
-    ...totals,
+    totalSubscribers,
+    totalViews30d: window?.totalViews30d ?? null,
+    totalWatchTimeHours30d: window?.totalWatchTimeHours30d ?? null,
+    totalEstimatedRevenue30d: window?.totalEstimatedRevenue30d ?? null,
     avgEngagementRate,
-    viewsGrowth30d: 3.4,
-    revenueGrowth30d: 7.2,
+    subscriberGrowth30d: window?.subscriberGrowth30d ?? null,
+    viewsGrowth30d: window?.viewsGrowth30d ?? null,
+    revenueGrowth30d: window?.revenueGrowth30d ?? null,
     topChannelByViews: topByViews.name,
-    topChannelByGrowth: topByGrowth.name,
+    topChannelByGrowth,
+    oauthChannelCount,
+    totalChannelCount,
   });
 });
 
@@ -531,32 +560,61 @@ router.get("/overview/trends", async (req, res): Promise<void> => {
   const queryParams = GetOverviewTrendsQueryParams.safeParse(req.query);
   const days = queryParams.success ? queryParams.data.days : 30;
 
-  const now = new Date();
-  const trends = [];
-
-  const channelCount = Math.max(channels.length, 1);
-  const baseViews = Math.round(1_885_000 * (channelCount / 5));
-  const baseSubs = Math.round(5_740 * (channelCount / 5));
-  const baseRevenue = Math.round(7_540 * (channelCount / 5));
-  const baseWatchHours = Math.round(75_000 * (channelCount / 5));
-
-  for (let i = days - 1; i >= 0; i--) {
-    const date = new Date(now);
-    date.setDate(date.getDate() - i);
-    const day = date.getDay();
-    const isWeekend = day === 0 || day === 6;
-    const weekendBoost = isWeekend ? 1.25 : 1.0;
-    const trend = 1 + (days - i) * 0.003;
-    const noise = () => 0.75 + Math.random() * 0.5;
-
-    trends.push({
-      date: date.toISOString().split("T")[0],
-      totalViews: Math.round(baseViews * weekendBoost * trend * noise()),
-      totalSubscribers: Math.round(baseSubs * weekendBoost * trend * noise()),
-      totalWatchTimeHours: Math.round(baseWatchHours * weekendBoost * trend * noise() * 10) / 10,
-      totalRevenue: Math.round(baseRevenue * trend * noise() * 100) / 100,
-    });
+  // Cross-channel daily trends — only real Analytics API data, summed across
+  // OAuth'd channels. With zero OAuth'd channels, return []. With one
+  // OAuth'd channel (the common case here — only MindfulHz is connected),
+  // the points reflect that single channel honestly.
+  if (!isConnected()) {
+    res.json([]);
+    return;
   }
+
+  const ownedIds = await getOwnedChannelIds();
+  const oauthChannels = channels.filter(
+    (c) => !!c.youtubeChannelId && ownedIds.has(c.youtubeChannelId),
+  );
+  if (oauthChannels.length === 0) {
+    res.json([]);
+    return;
+  }
+
+  // Pull each channel's daily metrics, then sum by date.
+  const byDate = new Map<
+    string,
+    { views: number; subs: number; watchTimeHours: number; revenue: number }
+  >();
+
+  for (const ch of oauthChannels) {
+    if (!ch.youtubeChannelId) continue;
+    try {
+      const series = await getRealMetrics(ch.youtubeChannelId, days);
+      for (const row of series) {
+        const cur = byDate.get(row.date) ?? {
+          views: 0,
+          subs: 0,
+          watchTimeHours: 0,
+          revenue: 0,
+        };
+        cur.views += row.views;
+        cur.subs += row.subscribers;
+        cur.watchTimeHours += row.watchTimeHours;
+        cur.revenue += row.estimatedRevenue;
+        byDate.set(row.date, cur);
+      }
+    } catch (e) {
+      req.log.warn({ err: e, channelId: ch.id }, "trends: per-channel Analytics fetch failed");
+    }
+  }
+
+  const trends = Array.from(byDate.entries())
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([date, v]) => ({
+      date,
+      totalViews: v.views,
+      totalSubscribers: v.subs,
+      totalWatchTimeHours: Math.round(v.watchTimeHours * 10) / 10,
+      totalRevenue: Math.round(v.revenue * 100) / 100,
+    }));
 
   res.json(trends);
 });
