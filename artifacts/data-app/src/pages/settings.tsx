@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useGetChannels,
@@ -21,7 +21,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Pencil, Trash2, Plus, ExternalLink, CheckCircle2, XCircle, RefreshCw, Zap } from "lucide-react";
+import { Pencil, Trash2, Plus, ExternalLink, CheckCircle2, XCircle, RefreshCw, Zap, Youtube, LogOut, Download } from "lucide-react";
 
 const PRESET_COLORS = [
   "#FF0000", "#FFC107", "#E91E63", "#4CAF50", "#9C27B0",
@@ -102,6 +102,31 @@ interface ZernioAccount {
   zernioId: string;
 }
 
+interface YTChannel {
+  id: string;
+  name: string;
+  handle: string;
+  thumbnail: string | null;
+  subscribers: number;
+  totalViews: number;
+  totalVideos: number;
+}
+
+interface YTStatus {
+  connected: boolean;
+  configured: boolean;
+  channels?: YTChannel[];
+  error?: string;
+}
+
+type Tab = "channels" | "platforms" | "zernio" | "youtube";
+
+function getInitialTab(): Tab {
+  const p = new URLSearchParams(window.location.search).get("tab");
+  if (p === "youtube" || p === "channels" || p === "platforms" || p === "zernio") return p;
+  return "channels";
+}
+
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const channelsQuery = useGetChannels();
@@ -110,7 +135,7 @@ export function SettingsPage() {
   const updateMutation = useUpdateChannel();
   const deleteMutation = useDeleteChannel();
 
-  const [tab, setTab] = useState<"channels" | "platforms" | "zernio">("channels");
+  const [tab, setTab] = useState<Tab>(getInitialTab);
   const [addOpen, setAddOpen] = useState(false);
   const [editChannel, setEditChannel] = useState<ChannelSummary | null>(null);
   const [deleteChannel, setDeleteChannelState] = useState<ChannelSummary | null>(null);
@@ -125,8 +150,72 @@ export function SettingsPage() {
   const [syncing, setSyncing] = useState<Set<string>>(new Set());
   const [synced, setSynced] = useState<Set<string>>(new Set());
 
+  // YouTube OAuth state
+  const [ytStatus, setYtStatus] = useState<YTStatus | null>(null);
+  const [ytLoading, setYtLoading] = useState(false);
+  const [ytImporting, setYtImporting] = useState<Set<string>>(new Set());
+  const [ytImported, setYtImported] = useState<Set<string>>(new Set());
+  const [ytConnectedBanner, setYtConnectedBanner] = useState(() =>
+    new URLSearchParams(window.location.search).get("connected") === "1"
+  );
+  const [ytUrlError] = useState(() =>
+    new URLSearchParams(window.location.search).get("error") ?? ""
+  );
+
   const platforms = platformsQuery.data ?? [];
   const channels = channelsQuery.data ?? [];
+
+  // Auto-load YouTube status when the YouTube tab is active
+  useEffect(() => {
+    if (tab === "youtube" && ytStatus === null && !ytLoading) {
+      void loadYtStatus();
+    }
+  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadYtStatus() {
+    setYtLoading(true);
+    try {
+      const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const res = await fetch(`${base}/api/auth/youtube/status`);
+      const data = await res.json() as YTStatus;
+      setYtStatus(data);
+    } catch {
+      setYtStatus({ connected: false, configured: false, error: "Could not reach server" });
+    } finally {
+      setYtLoading(false);
+    }
+  }
+
+  async function importYtChannel(ytCh: YTChannel) {
+    setYtImporting((s) => new Set(s).add(ytCh.id));
+    try {
+      const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const res = await fetch(`${base}/api/auth/youtube/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ytChannelId: ytCh.id }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(j.error ?? `HTTP ${res.status}`);
+      }
+      await queryClient.invalidateQueries({ queryKey: getGetChannelsQueryKey() });
+      setYtImported((s) => new Set(s).add(ytCh.id));
+    } catch (e: unknown) {
+      const err = e as { message?: string };
+      alert(`Import failed: ${err.message ?? "unknown error"}`);
+    } finally {
+      setYtImporting((s) => { const n = new Set(s); n.delete(ytCh.id); return n; });
+    }
+  }
+
+  async function disconnectYoutube() {
+    const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+    await fetch(`${base}/api/auth/youtube/disconnect`, { method: "POST" });
+    setYtStatus({ connected: false, configured: ytStatus?.configured ?? false });
+    setYtImported(new Set());
+    setYtConnectedBanner(false);
+  }
 
   function openAdd() {
     setForm({ ...emptyForm, platform: platforms[0]?.id ?? "youtube" });
@@ -271,18 +360,20 @@ export function SettingsPage() {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 bg-muted p-1 rounded-md border border-border w-fit">
-          {(["channels", "zernio", "platforms"] as const).map((t) => (
+        <div className="flex gap-1 bg-muted p-1 rounded-md border border-border w-fit flex-wrap">
+          {(["channels", "youtube", "zernio", "platforms"] as const).map((t) => (
             <button
               key={t}
               className={`text-sm px-4 py-1.5 rounded-sm capitalize transition-colors flex items-center gap-1.5 ${tab === t ? "bg-background shadow-sm font-medium text-foreground" : "text-muted-foreground hover:text-foreground"}`}
               onClick={() => {
                 setTab(t);
                 if (t === "zernio" && !zernioAccounts && !zernioLoading) loadZernioAccounts();
+                if (t === "youtube" && ytStatus === null && !ytLoading) void loadYtStatus();
               }}
             >
               {t === "zernio" && <Zap className="w-3 h-3" />}
-              {t === "zernio" ? "Zernio Sync" : t}
+              {t === "youtube" && <Youtube className="w-3 h-3" />}
+              {t === "zernio" ? "Zernio Sync" : t === "youtube" ? "YouTube" : t}
             </button>
           ))}
         </div>
@@ -475,6 +566,192 @@ export function SettingsPage() {
 
             <p className="text-xs text-muted-foreground">
               Deep analytics (views, engagement, reach) require the Zernio Analytics add-on. Follower counts are pulled live from your connected accounts.
+            </p>
+          </div>
+        )}
+
+        {/* YouTube OAuth Tab */}
+        {tab === "youtube" && (
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm text-muted-foreground">
+                Connect your Google account to pull real analytics — views, watch time, revenue, and subscribers — directly from YouTube for channels you own.
+              </p>
+            </div>
+
+            {/* Success banner from OAuth redirect */}
+            {ytConnectedBanner && (
+              <div className="flex items-center gap-2 text-sm text-green-500 bg-green-500/10 border border-green-500/20 px-4 py-3 rounded-lg">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>Connected! Select channels below to add them to your dashboard.</span>
+                <button className="ml-auto text-green-500/70 hover:text-green-500" onClick={() => setYtConnectedBanner(false)}>✕</button>
+              </div>
+            )}
+
+            {/* Error banner from OAuth redirect */}
+            {ytUrlError && (
+              <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 px-4 py-3 rounded-lg">
+                <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{decodeURIComponent(ytUrlError)}</span>
+              </div>
+            )}
+
+            {/* Status card */}
+            <Card className="bg-card">
+              <CardContent className="p-5">
+                {ytLoading ? (
+                  <div className="space-y-3">
+                    <Skeleton className="h-10 w-64" />
+                    <Skeleton className="h-4 w-48" />
+                  </div>
+                ) : !ytStatus ? null : !ytStatus.configured ? (
+                  <div className="space-y-4">
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-[#FF0000]/15 flex items-center justify-center shrink-0">
+                        <Youtube className="w-5 h-5 text-[#FF0000]" />
+                      </div>
+                      <div>
+                        <p className="font-semibold text-sm text-foreground">Not configured</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Add <code className="bg-muted px-1 py-0.5 rounded text-xs">YOUTUBE_CLIENT_ID</code> and{" "}
+                          <code className="bg-muted px-1 py-0.5 rounded text-xs">YOUTUBE_CLIENT_SECRET</code> as Replit secrets to get started.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="bg-muted/50 border border-border rounded-lg p-4 space-y-2 text-xs text-muted-foreground">
+                      <p className="font-semibold text-foreground text-sm">Google Cloud setup (5 min)</p>
+                      <ol className="list-decimal list-inside space-y-1.5">
+                        <li>Go to <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">console.cloud.google.com</a> → New Project</li>
+                        <li>Enable <strong>YouTube Data API v3</strong> + <strong>YouTube Analytics API</strong></li>
+                        <li>OAuth consent screen → External → add scopes: <code className="bg-muted px-1 rounded">youtube.readonly</code> &amp; <code className="bg-muted px-1 rounded">yt-analytics.readonly</code></li>
+                        <li>Credentials → Create OAuth 2.0 Client ID (Web) → add redirect URI below</li>
+                        <li>Copy Client ID + Secret → add as Replit secrets</li>
+                      </ol>
+                      <div className="mt-2 pt-2 border-t border-border">
+                        <p className="text-foreground font-medium mb-1">Redirect URI to add in Google Cloud:</p>
+                        <code className="block bg-background border border-border rounded px-3 py-2 text-[11px] break-all select-all">
+                          {window.location.origin}/api/auth/youtube/callback
+                        </code>
+                      </div>
+                    </div>
+                  </div>
+                ) : !ytStatus.connected ? (
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-[#FF0000]/15 flex items-center justify-center shrink-0">
+                        <Youtube className="w-5 h-5 text-[#FF0000]" />
+                      </div>
+                      <div>
+                        <p className="font-semibold text-sm text-foreground">Not connected</p>
+                        {ytStatus.error ? (
+                          <p className="text-xs text-destructive mt-0.5">{ytStatus.error}</p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground mt-0.5">Connect your Google account to import your channels.</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 ml-auto">
+                      <Button size="sm" variant="outline" onClick={() => void loadYtStatus()} disabled={ytLoading} className="h-8 text-xs gap-1.5">
+                        <RefreshCw className={`w-3.5 h-3.5 ${ytLoading ? "animate-spin" : ""}`} />
+                        Refresh
+                      </Button>
+                      <a
+                        href={`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/auth/youtube`}
+                        className="inline-flex items-center gap-2 h-8 px-3 text-xs font-medium rounded-md bg-white text-gray-800 border border-gray-200 hover:bg-gray-50 transition-colors shadow-sm"
+                      >
+                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
+                          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                        </svg>
+                        Connect with Google
+                      </a>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-green-500/15 flex items-center justify-center shrink-0">
+                        <CheckCircle2 className="w-5 h-5 text-green-500" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-sm text-foreground">Connected to YouTube</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {ytStatus.channels?.length ?? 0} channel{(ytStatus.channels?.length ?? 0) !== 1 ? "s" : ""} found on your account
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Button size="sm" variant="outline" onClick={() => void loadYtStatus()} disabled={ytLoading} className="h-8 text-xs gap-1.5">
+                          <RefreshCw className={`w-3.5 h-3.5 ${ytLoading ? "animate-spin" : ""}`} />
+                          Refresh
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => void disconnectYoutube()} className="h-8 text-xs gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10">
+                          <LogOut className="w-3.5 h-3.5" />
+                          Disconnect
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Channel list */}
+                    {ytStatus.channels && ytStatus.channels.length > 0 ? (
+                      <div className="border border-border rounded-lg divide-y divide-border">
+                        {ytStatus.channels.map((ytCh) => {
+                          const isImported = ytImported.has(ytCh.id);
+                          const isImportingThis = ytImporting.has(ytCh.id);
+                          return (
+                            <div key={ytCh.id} className="flex items-center gap-4 px-4 py-3.5">
+                              {ytCh.thumbnail ? (
+                                <img src={ytCh.thumbnail} alt={ytCh.name} className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                              ) : (
+                                <div className="w-10 h-10 rounded-lg bg-[#FF0000]/20 flex items-center justify-center text-base font-bold text-[#FF0000] shrink-0">
+                                  {ytCh.name.charAt(0)}
+                                </div>
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <div className="font-semibold text-sm text-foreground truncate">{ytCh.name}</div>
+                                <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                                  <span className="text-xs text-muted-foreground font-mono">{ytCh.handle}</span>
+                                  <span className="text-xs text-muted-foreground">{ytCh.subscribers.toLocaleString()} subscribers</span>
+                                  <span className="text-xs text-muted-foreground">{ytCh.totalVideos.toLocaleString()} videos</span>
+                                </div>
+                              </div>
+                              <div className="shrink-0">
+                                {isImported ? (
+                                  <span className="flex items-center gap-1 text-xs text-green-500 font-medium">
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    Added
+                                  </span>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs gap-1.5"
+                                    disabled={isImportingThis}
+                                    onClick={() => void importYtChannel(ytCh)}
+                                  >
+                                    <Download className="w-3 h-3" />
+                                    {isImportingThis ? "Adding..." : "Add to Dashboard"}
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="py-8 text-center text-muted-foreground text-sm border border-border rounded-lg">
+                        No channels found on this Google account.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <p className="text-xs text-muted-foreground">
+              Once added, your channel's dashboard page will show real analytics from YouTube — including revenue if your channel is monetized.
+              Data is fetched live from YouTube Analytics API and refreshes each page load.
             </p>
           </div>
         )}

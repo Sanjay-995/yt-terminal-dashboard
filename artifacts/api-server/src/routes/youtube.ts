@@ -5,6 +5,13 @@ import {
   GetChannelVideosParams,
   GetOverviewTrendsQueryParams,
 } from "@workspace/api-zod";
+import {
+  isConnected,
+  getRealMetrics,
+  getRealVideos,
+} from "../lib/youtube-client";
+import type { YouTubeChannel } from "../lib/youtube-client";
+
 const router: IRouter = Router();
 
 // ─── Platforms ────────────────────────────────────────────────────────────────
@@ -20,9 +27,27 @@ const PLATFORMS = [
   { id: "pinterest", name: "Pinterest", color: "#E60023", supportsAnalytics: false, supportsRevenue: false },
 ];
 
-// ─── Mutable Channel Store ────────────────────────────────────────────────────
+// ─── Channel store ────────────────────────────────────────────────────────────
 
-let channels = [
+interface Channel {
+  id: string;
+  name: string;
+  handle: string;
+  platform: string;
+  url: string;
+  avatarColor: string;
+  subscribers: number;
+  totalViews: number;
+  totalVideos: number;
+  totalWatchTimeHours: number;
+  avgViewsPerVideo: number;
+  subscriberGrowth30d: number;
+  viewsGrowth30d: number;
+  engagementRate: number;
+  youtubeChannelId?: string; // set for channels linked to real YouTube data
+}
+
+let channels: Channel[] = [
   {
     id: "ch_mkbhd",
     name: "MKBHD",
@@ -105,7 +130,42 @@ let channels = [
   },
 ];
 
-// ─── Request Validation ───────────────────────────────────────────────────────
+/**
+ * Add or update a channel imported from a real YouTube account.
+ * Exported so the OAuth route can call it without circular imports.
+ */
+export function addOrUpdateYouTubeChannel(ytCh: YouTubeChannel): Channel {
+  const existing = channels.findIndex((c) => c.youtubeChannelId === ytCh.id);
+
+  const channel: Channel = {
+    id: existing >= 0 ? channels[existing]!.id : `ch_yt_${ytCh.id}`,
+    name: ytCh.name,
+    handle: ytCh.handle,
+    platform: "youtube",
+    url: `https://youtube.com/${ytCh.handle}`,
+    avatarColor: existing >= 0 ? channels[existing]!.avatarColor : "#FF0000",
+    subscribers: ytCh.subscribers,
+    totalViews: ytCh.totalViews,
+    totalVideos: ytCh.totalVideos,
+    totalWatchTimeHours: Math.round(ytCh.totalViews * 0.07),
+    avgViewsPerVideo:
+      ytCh.totalVideos > 0 ? Math.round(ytCh.totalViews / ytCh.totalVideos) : 0,
+    subscriberGrowth30d: Math.round(ytCh.subscribers * 0.005),
+    viewsGrowth30d: 2.5,
+    engagementRate: 3.0,
+    youtubeChannelId: ytCh.id,
+  };
+
+  if (existing >= 0) {
+    channels[existing] = channel;
+  } else {
+    channels.push(channel);
+  }
+
+  return channel;
+}
+
+// ─── Request validation ───────────────────────────────────────────────────────
 
 interface CreateChannelBody {
   name: string;
@@ -129,7 +189,9 @@ interface UpdateChannelBody {
   totalVideos?: number;
 }
 
-function validateCreate(body: unknown): { ok: true; data: CreateChannelBody } | { ok: false; error: string } {
+function validateCreate(
+  body: unknown
+): { ok: true; data: CreateChannelBody } | { ok: false; error: string } {
   if (!body || typeof body !== "object") return { ok: false, error: "Body must be an object" };
   const b = body as Record<string, unknown>;
   if (!b["name"] || typeof b["name"] !== "string") return { ok: false, error: "name is required" };
@@ -166,7 +228,7 @@ function validateUpdate(body: unknown): UpdateChannelBody {
   return out;
 }
 
-// ─── Metrics & Videos Generators ─────────────────────────────────────────────
+// ─── Generated-data fallbacks ─────────────────────────────────────────────────
 
 function generateDailyMetrics(channelId: string, days: number) {
   const ch = channels.find((c) => c.id === channelId);
@@ -204,7 +266,17 @@ function generateDailyMetrics(channelId: string, days: number) {
     const engagementRate = Math.round(((likes + comments + shares) / views) * 1000) / 10;
     const estimatedRevenue = Math.round(seed.baseRevenue * trend * noise() * 100) / 100;
 
-    result.push({ date: date.toISOString().split("T")[0], views, subscribers, watchTimeHours, likes, comments, shares, engagementRate, estimatedRevenue });
+    result.push({
+      date: date.toISOString().split("T")[0],
+      views,
+      subscribers,
+      watchTimeHours,
+      likes,
+      comments,
+      shares,
+      engagementRate,
+      estimatedRevenue,
+    });
   }
 
   return result;
@@ -252,7 +324,7 @@ function generateVideos(channelId: string, limit: number) {
   });
 }
 
-// ─── Routes ──────────────────────────────────────────────────────────────────
+// ─── Routes ───────────────────────────────────────────────────────────────────
 
 router.get("/platforms", (_req, res) => {
   res.json(PLATFORMS);
@@ -274,16 +346,19 @@ router.post("/channels", async (req, res): Promise<void> => {
     return;
   }
 
-  const { name, handle, platform, avatarColor, url, subscribers = 0, totalViews = 0, totalVideos = 0 } = validation.data;
+  const { name, handle, platform, avatarColor, url, subscribers = 0, totalViews = 0, totalVideos = 0 } =
+    validation.data;
 
-  const existing = channels.find((c) => c.handle.toLowerCase() === handle.toLowerCase() && c.platform === platform);
+  const existing = channels.find(
+    (c) => c.handle.toLowerCase() === handle.toLowerCase() && c.platform === platform
+  );
   if (existing) {
     res.status(409).json({ error: "A channel with this handle on this platform already exists" });
     return;
   }
 
   const id = `ch_${platform}_${handle.replace(/[@\s]/g, "").toLowerCase()}_${Date.now()}`;
-  const newChannel = {
+  const newChannel: Channel = {
     id,
     name,
     handle,
@@ -324,7 +399,8 @@ router.patch("/channels/:channelId", async (req, res): Promise<void> => {
   const updated = { ...channels[idx]!, ...body };
   if (body.totalViews !== undefined || body.totalVideos !== undefined) {
     updated.totalWatchTimeHours = Math.round(updated.totalViews * 0.07);
-    updated.avgViewsPerVideo = updated.totalVideos > 0 ? Math.round(updated.totalViews / updated.totalVideos) : 0;
+    updated.avgViewsPerVideo =
+      updated.totalVideos > 0 ? Math.round(updated.totalViews / updated.totalVideos) : 0;
   }
 
   channels[idx] = updated;
@@ -356,7 +432,20 @@ router.get("/channels/:channelId/metrics", async (req, res): Promise<void> => {
   }
 
   const days = Number(req.query["days"] ?? 30);
-  res.json(generateDailyMetrics(params.data.channelId, isNaN(days) ? 30 : days));
+  const safeDays = isNaN(days) ? 30 : days;
+
+  // Use real YouTube Analytics data when available
+  if (channel.youtubeChannelId && isConnected()) {
+    try {
+      const metrics = await getRealMetrics(channel.youtubeChannelId, safeDays);
+      res.json(metrics);
+      return;
+    } catch (e) {
+      req.log.warn({ err: e }, "YouTube Analytics fetch failed, falling back to generated data");
+    }
+  }
+
+  res.json(generateDailyMetrics(params.data.channelId, safeDays));
 });
 
 router.get("/channels/:channelId/videos", async (req, res): Promise<void> => {
@@ -373,7 +462,20 @@ router.get("/channels/:channelId/videos", async (req, res): Promise<void> => {
   }
 
   const limit = Number(req.query["limit"] ?? 20);
-  res.json(generateVideos(params.data.channelId, isNaN(limit) ? 20 : limit));
+  const safeLimit = isNaN(limit) ? 20 : limit;
+
+  // Use real YouTube video data when available
+  if (channel.youtubeChannelId && isConnected()) {
+    try {
+      const videos = await getRealVideos(channel.youtubeChannelId, safeLimit, channel.avatarColor);
+      res.json(videos);
+      return;
+    } catch (e) {
+      req.log.warn({ err: e }, "YouTube videos fetch failed, falling back to generated data");
+    }
+  }
+
+  res.json(generateVideos(params.data.channelId, safeLimit));
 });
 
 router.get("/overview", async (_req, res): Promise<void> => {
@@ -391,17 +493,28 @@ router.get("/overview", async (_req, res): Promise<void> => {
       totalSubscribers: acc.totalSubscribers + ch.subscribers,
       totalViews30d: acc.totalViews30d + Math.round(ch.totalViews * 0.007),
       totalWatchTimeHours30d: acc.totalWatchTimeHours30d + Math.round(ch.totalWatchTimeHours * 0.006),
-      totalEstimatedRevenue30d: acc.totalEstimatedRevenue30d + Math.round(ch.totalViews * 0.000002 * 100) / 100,
+      totalEstimatedRevenue30d:
+        acc.totalEstimatedRevenue30d + Math.round(ch.totalViews * 0.000002 * 100) / 100,
       subscriberGrowth30d: acc.subscriberGrowth30d + ch.subscriberGrowth30d,
     }),
     { totalSubscribers: 0, totalViews30d: 0, totalWatchTimeHours30d: 0, totalEstimatedRevenue30d: 0, subscriberGrowth30d: 0 }
   );
 
-  const avgEngagementRate = Math.round((channels.reduce((s, ch) => s + ch.engagementRate, 0) / channels.length) * 10) / 10;
-  const topByViews = channels.reduce((a, b) => a.totalViews > b.totalViews ? a : b);
-  const topByGrowth = channels.reduce((a, b) => a.subscriberGrowth30d > b.subscriberGrowth30d ? a : b);
+  const avgEngagementRate =
+    Math.round((channels.reduce((s, ch) => s + ch.engagementRate, 0) / channels.length) * 10) / 10;
+  const topByViews = channels.reduce((a, b) => (a.totalViews > b.totalViews ? a : b));
+  const topByGrowth = channels.reduce((a, b) =>
+    a.subscriberGrowth30d > b.subscriberGrowth30d ? a : b
+  );
 
-  res.json({ ...totals, avgEngagementRate, viewsGrowth30d: 3.4, revenueGrowth30d: 7.2, topChannelByViews: topByViews.name, topChannelByGrowth: topByGrowth.name });
+  res.json({
+    ...totals,
+    avgEngagementRate,
+    viewsGrowth30d: 3.4,
+    revenueGrowth30d: 7.2,
+    topChannelByViews: topByViews.name,
+    topChannelByGrowth: topByGrowth.name,
+  });
 });
 
 router.get("/overview/trends", async (req, res): Promise<void> => {
