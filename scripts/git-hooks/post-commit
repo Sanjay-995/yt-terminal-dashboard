@@ -1,0 +1,5 @@
+#!/bin/bash
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+"$REPO_ROOT/scripts/github-sync.sh" || {
+  echo "Warning: GitHub mirror sync failed. Check GITHUB_PERSONAL_ACCESS_TOKEN." >&2
+}
