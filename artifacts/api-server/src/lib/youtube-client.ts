@@ -23,6 +23,18 @@ export function isConnected(): boolean {
   return _tokens !== null;
 }
 
+export function getRefreshToken(): string | null {
+  return _tokens?.refreshToken ?? null;
+}
+
+/**
+ * Hydrate tokens from a known refresh token (e.g. loaded from env on cold start).
+ * Sets accessToken empty + expiresAt=0 so the first API call refreshes immediately.
+ */
+export function hydrateFromRefreshToken(refreshToken: string): void {
+  _tokens = { accessToken: "", refreshToken, expiresAt: 0 };
+}
+
 async function getAccessToken(): Promise<string> {
   if (!_tokens) throw new Error("Not connected to YouTube — please connect in Settings");
 
@@ -90,6 +102,39 @@ export interface VideoRow {
 }
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
+
+export async function getChannelByHandle(handle: string): Promise<YouTubeChannel | null> {
+  const token = await getAccessToken();
+  const cleanHandle = handle.replace(/^@/, "");
+
+  const resp = await fetch(
+    `https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&forHandle=@${cleanHandle}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+
+  if (!resp.ok) throw new Error(`YouTube forHandle error: ${resp.status} ${resp.statusText}`);
+
+  const data = await resp.json() as {
+    items?: Array<{
+      id: string;
+      snippet: { title: string; customUrl?: string; thumbnails?: { default?: { url: string } } };
+      statistics: { subscriberCount?: string; viewCount?: string; videoCount?: string };
+    }>;
+  };
+
+  const item = data.items?.[0];
+  if (!item) return null;
+
+  return {
+    id: item.id,
+    name: item.snippet.title,
+    handle: `@${cleanHandle}`,
+    thumbnail: item.snippet.thumbnails?.default?.url ?? null,
+    subscribers: parseInt(item.statistics.subscriberCount ?? "0", 10),
+    totalViews: parseInt(item.statistics.viewCount ?? "0", 10),
+    totalVideos: parseInt(item.statistics.videoCount ?? "0", 10),
+  };
+}
 
 export async function getMyChannels(): Promise<YouTubeChannel[]> {
   const token = await getAccessToken();

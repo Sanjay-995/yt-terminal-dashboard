@@ -165,6 +165,16 @@ export function addOrUpdateYouTubeChannel(ytCh: YouTubeChannel): Channel {
   return channel;
 }
 
+/**
+ * Remove seed/mock channels (those without a linked YouTube ID).
+ * Returns the number removed.
+ */
+export function clearSeedChannels(): number {
+  const before = channels.length;
+  channels = channels.filter((c) => c.youtubeChannelId !== undefined);
+  return before - channels.length;
+}
+
 // ─── Request validation ───────────────────────────────────────────────────────
 
 interface CreateChannelBody {

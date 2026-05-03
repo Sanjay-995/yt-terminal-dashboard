@@ -41,20 +41,28 @@ function Router() {
 }
 
 function App() {
-  const [unlocked, setUnlocked] = useState(
-    () => sessionStorage.getItem("yt_access") === "1"
-  );
+  // null = checking, true = authenticated, false = needs lock screen
+  const [authState, setAuthState] = useState<null | boolean>(null);
+
+  useEffect(() => {
+    const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+    fetch(`${base}/api/auth/check`, { credentials: "include" })
+      .then((r) => setAuthState(r.ok))
+      .catch(() => setAuthState(false));
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <DarkModeEnforcer />
-        {unlocked ? (
+        {authState === null ? (
+          <div className="min-h-screen bg-background" />
+        ) : authState ? (
           <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
             <Router />
           </WouterRouter>
         ) : (
-          <LockScreen onUnlock={() => setUnlocked(true)} />
+          <LockScreen onUnlock={() => setAuthState(true)} />
         )}
         <Toaster />
       </TooltipProvider>

@@ -1,0 +1,36 @@
+# Render free tier — single Web Service serving API + built frontend.
+# https://render.com/docs/yaml-spec
+services:
+  - type: web
+    name: yt-terminal-dashboard
+    runtime: node
+    plan: free
+    region: oregon
+    nodeVersion: 22
+    buildCommand: |
+      corepack enable
+      corepack prepare pnpm@9.15.0 --activate
+      pnpm install --frozen-lockfile
+      PORT=10000 BASE_PATH=/ pnpm --filter @workspace/data-app run build
+      pnpm --filter @workspace/api-server run build
+    startCommand: SERVE_FRONTEND=1 node --enable-source-maps artifacts/api-server/dist/index.mjs
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ACCESS_CODE
+        sync: false        # set in Render dashboard
+      - key: SESSION_SECRET
+        sync: false        # set in Render dashboard (long random string)
+      - key: ZERNIO_API_KEY
+        sync: false        # set in Render dashboard (or leave empty for placeholder)
+      - key: YOUTUBE_CLIENT_ID
+        sync: false        # set in Render dashboard
+      - key: YOUTUBE_CLIENT_SECRET
+        sync: false        # set in Render dashboard
+      - key: YOUTUBE_REFRESH_TOKEN
+        sync: false        # set AFTER first OAuth (see /api/auth/youtube/refresh-token)
+      - key: YOUTUBE_CHANNEL_HANDLES
+        sync: false        # comma-separated, e.g. @MindfulHz,@Dazzleboo,@MapMindExplains
+      - key: PUBLIC_URL
+        sync: false        # set to https://<your-render-subdomain>.onrender.com after first deploy

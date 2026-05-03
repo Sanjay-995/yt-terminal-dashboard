@@ -20,11 +20,11 @@ export function LockScreen({ onUnlock }: LockScreenProps) {
       const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       const res = await fetch(`${base}/api/auth/verify`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
       });
       if (res.ok) {
-        sessionStorage.setItem("yt_access", "1");
         onUnlock();
       } else {
         setError(true);

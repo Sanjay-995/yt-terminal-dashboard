@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { bootstrapState } from "./bootstrap";
 
 const rawPort = process.env["PORT"];
 
@@ -22,4 +23,10 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+
+  // Hydrate OAuth + auto-import channels in the background so server
+  // boot is not blocked by external API calls.
+  bootstrapState().catch((err) => {
+    logger.error({ err }, "bootstrapState failed");
+  });
 });
