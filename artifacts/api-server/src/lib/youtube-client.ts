@@ -239,18 +239,24 @@ export async function getRealMetrics(ytChannelId: string, days: number): Promise
   const start = new Date();
   start.setDate(start.getDate() - days + 1);
   const fmt = (d: Date) => d.toISOString().split("T")[0]!;
+  const startDate = fmt(start);
+  const endDate = fmt(end);
 
-  const params = new URLSearchParams({
+  // CORE metrics — available with the yt-analytics.readonly scope. We MUST NOT
+  // mix revenue metrics into this query: estimatedRevenue requires the separate
+  // yt-analytics-monetary.readonly scope, and YouTube fails the ENTIRE report
+  // with 401 "Insufficient permission" if revenue is requested without it.
+  const coreParams = new URLSearchParams({
     ids: `channel==${ytChannelId}`,
-    startDate: fmt(start),
-    endDate: fmt(end),
+    startDate,
+    endDate,
     dimensions: "day",
-    metrics: "views,estimatedRevenue,averageViewDuration,subscribersGained,likes,comments,shares",
+    metrics: "views,averageViewDuration,subscribersGained,likes,comments,shares",
     sort: "day",
   });
 
   const resp = await fetch(
-    `https://youtubeanalytics.googleapis.com/v2/reports?${params}`,
+    `https://youtubeanalytics.googleapis.com/v2/reports?${coreParams}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
 
@@ -266,6 +272,41 @@ export async function getRealMetrics(ytChannelId: string, days: number): Promise
 
   const headers = (data.columnHeaders ?? []).map((h) => h.name);
   const rows = data.rows ?? [];
+
+  // REVENUE — fetched in a SEPARATE, failure-tolerant query. Monetized channels
+  // with the monetary scope get real numbers keyed by day; everyone else gets
+  // an empty map and estimatedRevenue stays 0 (we never fabricate it).
+  const revenueByDay = new Map<string, number>();
+  try {
+    const revParams = new URLSearchParams({
+      ids: `channel==${ytChannelId}`,
+      startDate,
+      endDate,
+      dimensions: "day",
+      metrics: "estimatedRevenue",
+      sort: "day",
+    });
+    const revResp = await fetch(
+      `https://youtubeanalytics.googleapis.com/v2/reports?${revParams}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (revResp.ok) {
+      const revData = await revResp.json() as {
+        columnHeaders?: Array<{ name: string }>;
+        rows?: Array<Array<string | number>>;
+      };
+      const revHeaders = (revData.columnHeaders ?? []).map((h) => h.name);
+      const dIdx = revHeaders.indexOf("day");
+      const rIdx = revHeaders.indexOf("estimatedRevenue");
+      for (const row of revData.rows ?? []) {
+        const day = String(dIdx >= 0 ? row[dIdx] : row[0]);
+        revenueByDay.set(day, Number(row[rIdx] ?? 0));
+      }
+    }
+    // Non-OK (e.g. 401 without monetary scope) is expected — revenue stays 0.
+  } catch {
+    // Network/parse error — degrade silently to 0 revenue.
+  }
 
   const result: DailyMetric[] = rows.map((row) => {
     const col = (name: string): number => {
@@ -283,9 +324,10 @@ export async function getRealMetrics(ytChannelId: string, days: number): Promise
       views > 0 ? Math.round(((likes + comments + shares) / views) * 1000) / 10 : 0;
 
     const dayIdx = headers.indexOf("day");
+    const date = String(dayIdx >= 0 ? row[dayIdx] : row[0]);
 
     return {
-      date: String(dayIdx >= 0 ? row[dayIdx] : row[0]),
+      date,
       views,
       subscribers: col("subscribersGained"),
       watchTimeHours,
@@ -293,7 +335,7 @@ export async function getRealMetrics(ytChannelId: string, days: number): Promise
       comments,
       shares,
       engagementRate,
-      estimatedRevenue: Math.round(col("estimatedRevenue") * 100) / 100,
+      estimatedRevenue: Math.round((revenueByDay.get(date) ?? 0) * 100) / 100,
     };
   });
 
