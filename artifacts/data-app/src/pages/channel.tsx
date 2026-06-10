@@ -143,7 +143,6 @@ export function ChannelPage() {
   );
 
   const avgEngagementForPeriod = useMemo(() => {
-    if (metricsData.length === 0) return null;
     let sum = 0;
     let count = 0;
     for (const d of metricsData) {
@@ -152,8 +151,13 @@ export function ChannelPage() {
         count++;
       }
     }
-    return count > 0 ? Math.round((sum / count) * 10) / 10 : null;
-  }, [metricsData]);
+    if (count > 0) return Math.round((sum / count) * 10) / 10;
+    // No daily series (e.g. Instagram) — fall back to the channel's
+    // account-level engagement rate when Zernio provided one.
+    return isMissing(activeChannel?.engagementRate)
+      ? null
+      : (activeChannel!.engagementRate as number);
+  }, [metricsData, activeChannel]);
 
   // Does this channel have ANY meaningful time-series data?
   const hasTimeSeries = useMemo(
