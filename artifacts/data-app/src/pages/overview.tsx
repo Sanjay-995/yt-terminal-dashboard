@@ -23,6 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { KPICard } from "@/components/dashboard/kpi-card";
 import { Leaderboard } from "@/components/dashboard/leaderboard";
 import { ZernioGrowthPanel } from "@/components/dashboard/zernio-growth";
+import { ZernioContentPanel } from "@/components/dashboard/zernio-content";
 import {
   DarkModeToggle,
   ExportPdfButton,
@@ -470,9 +471,12 @@ export function OverviewPage() {
           </div>
         </div>
 
-        {/* Cross-channel follower growth (Zernio) — renders only when Zernio
-            is connected with the analytics add-on; otherwise hides itself. */}
-        <ZernioGrowthPanel days={30} />
+        {/* Zernio enrichment — each panel self-hides when Zernio is
+            unconfigured/unreachable, so they never break the YouTube view. */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <ZernioGrowthPanel days={30} />
+          <ZernioContentPanel days={30} />
+        </div>
       </div>
     </div>
   );

@@ -315,6 +315,182 @@ router.get("/zernio/youtube/insights", async (req, res) => {
   }
 });
 
+// ─── Content performance (post-level analytics, cross-platform) ───────────────
+// Zernio's richest dataset: every published post with real engagement metrics.
+
+interface ZernioPostAnalytics {
+  impressions?: number;
+  reach?: number;
+  likes?: number;
+  comments?: number;
+  shares?: number;
+  saves?: number;
+  clicks?: number;
+  views?: number;
+  engagementRate?: number;
+  lastUpdated?: string;
+}
+
+interface ZernioPost {
+  _id: string;
+  content?: string;
+  publishedAt?: string;
+  status?: string;
+  platform?: string;
+  mediaType?: string;
+  thumbnailUrl?: string | null;
+  platformPostUrl?: string;
+  analytics?: ZernioPostAnalytics;
+  platforms?: Array<{
+    platform?: string;
+    platformPostId?: string;
+    accountId?: string;
+    accountUsername?: string;
+    platformPostUrl?: string;
+    analytics?: ZernioPostAnalytics;
+  }>;
+}
+
+router.get("/zernio/content", async (req, res) => {
+  if (!hasKey()) {
+    res.status(503).json({ error: "ZERNIO_API_KEY not configured" });
+    return;
+  }
+
+  const days = Number(req.query["days"] ?? 30);
+  const safeDays = Number.isFinite(days) && days > 0 ? Math.min(days, 366) : 30;
+  const limit = Math.min(Number(req.query["limit"] ?? 30) || 30, 100);
+  const platform = req.query["platform"] ? String(req.query["platform"]) : undefined;
+
+  const to = new Date();
+  const from = new Date();
+  from.setDate(from.getDate() - safeDays + 1);
+  const fmt = (d: Date) => d.toISOString().split("T")[0]!;
+
+  const params = new URLSearchParams({
+    fromDate: fmt(from),
+    toDate: fmt(to),
+    limit: String(limit),
+    sortBy: "publishedAt",
+  });
+  if (platform) params.set("platform", platform);
+
+  try {
+    const resp = await fetch(`${ZERNIO_BASE}/analytics?${params}`, { headers: zernioHeaders() });
+    if (resp.status === 402 || resp.status === 403) {
+      res.status(403).json({ error: "analytics_addon_required" });
+      return;
+    }
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => "");
+      res.status(resp.status).json({ error: `Zernio analytics ${resp.status}`, detail: body });
+      return;
+    }
+
+    const data = (await resp.json()) as {
+      overview?: { totalPosts?: number; publishedPosts?: number };
+      posts?: ZernioPost[];
+    };
+
+    const posts = (data.posts ?? []).map((p) => {
+      const primary = p.platforms?.[0];
+      const a = p.analytics ?? primary?.analytics ?? {};
+      return {
+        id: p._id,
+        platform: p.platform ?? primary?.platform ?? "unknown",
+        accountId: primary?.accountId ? `zernio_${primary.accountId}` : null,
+        accountUsername: primary?.accountUsername ?? null,
+        platformPostId: primary?.platformPostId ?? null,
+        title: (p.content ?? "").split("\n")[0]!.slice(0, 120) || "(untitled)",
+        publishedAt: p.publishedAt ?? null,
+        mediaType: p.mediaType ?? null,
+        thumbnailUrl: p.thumbnailUrl ?? null,
+        url: p.platformPostUrl ?? primary?.platformPostUrl ?? null,
+        views: a.views ?? 0,
+        likes: a.likes ?? 0,
+        comments: a.comments ?? 0,
+        shares: a.shares ?? 0,
+        saves: a.saves ?? 0,
+        reach: a.reach ?? 0,
+        impressions: a.impressions ?? 0,
+        engagementRate: a.engagementRate ?? 0,
+      };
+    });
+
+    res.json({
+      overview: {
+        totalPosts: data.overview?.totalPosts ?? posts.length,
+        publishedPosts: data.overview?.publishedPosts ?? posts.length,
+      },
+      posts,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    res.status(502).json({ error: "Failed to reach Zernio API", detail: message });
+  }
+});
+
+// ─── Comments for a post ──────────────────────────────────────────────────────
+// Requires the platform-native post id + the Zernio account id (both surfaced
+// by /zernio/content on each post).
+
+interface ZernioComment {
+  id: string;
+  message?: string;
+  createdTime?: string;
+  from?: { name?: string; username?: string; picture?: string | null; isOwner?: boolean };
+  likeCount?: number;
+  replyCount?: number;
+  platform?: string;
+}
+
+router.get("/zernio/comments", async (req, res) => {
+  if (!hasKey()) {
+    res.status(503).json({ error: "ZERNIO_API_KEY not configured" });
+    return;
+  }
+
+  const postId = String(req.query["postId"] ?? "");
+  const accountId = String(req.query["accountId"] ?? "").replace(/^zernio_/, "");
+  if (!postId || !accountId) {
+    res.status(400).json({ error: "postId and accountId are required" });
+    return;
+  }
+  const limit = Math.min(Number(req.query["limit"] ?? 25) || 25, 100);
+
+  const params = new URLSearchParams({ accountId, limit: String(limit) });
+
+  try {
+    const resp = await fetch(
+      `${ZERNIO_BASE}/inbox/comments/${encodeURIComponent(postId)}?${params}`,
+      { headers: zernioHeaders() },
+    );
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => "");
+      res.status(resp.status).json({ error: `Zernio comments ${resp.status}`, detail: body });
+      return;
+    }
+
+    const data = (await resp.json()) as { status?: string; comments?: ZernioComment[] };
+    const comments = (data.comments ?? []).map((c) => ({
+      id: c.id,
+      message: c.message ?? "",
+      author: c.from?.name || c.from?.username || "Unknown",
+      authorPicture: c.from?.picture ?? null,
+      isOwner: !!c.from?.isOwner,
+      likeCount: c.likeCount ?? 0,
+      replyCount: c.replyCount ?? 0,
+      createdAt: c.createdTime ?? null,
+      platform: c.platform ?? null,
+    }));
+
+    res.json({ comments });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    res.status(502).json({ error: "Failed to reach Zernio API", detail: message });
+  }
+});
+
 // ─── Posts (kept for compatibility) ───────────────────────────────────────────
 
 router.get("/zernio/posts", async (req, res) => {
