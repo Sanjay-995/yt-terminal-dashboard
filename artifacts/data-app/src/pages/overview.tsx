@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { KPICard } from "@/components/dashboard/kpi-card";
 import { Leaderboard } from "@/components/dashboard/leaderboard";
+import { ZernioGrowthPanel } from "@/components/dashboard/zernio-growth";
 import {
   DarkModeToggle,
   ExportPdfButton,
@@ -468,6 +469,10 @@ export function OverviewPage() {
             </Card>
           </div>
         </div>
+
+        {/* Cross-channel follower growth (Zernio) — renders only when Zernio
+            is connected with the analytics add-on; otherwise hides itself. */}
+        <ZernioGrowthPanel days={30} />
       </div>
     </div>
   );
