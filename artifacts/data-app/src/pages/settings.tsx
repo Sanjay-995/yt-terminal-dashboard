@@ -145,6 +145,13 @@ export function SettingsPage() {
 
   // Zernio sync state
   const [zernioAccounts, setZernioAccounts] = useState<ZernioAccount[] | null>(null);
+  const [zernioStatus, setZernioStatus] = useState<{
+    configured: boolean;
+    connected: boolean;
+    hasAnalyticsAccess: boolean;
+    accountCount: number;
+    error?: string;
+  } | null>(null);
   const [zernioLoading, setZernioLoading] = useState(false);
   const [zernioError, setZernioError] = useState("");
   const [importError, setImportError] = useState("");
@@ -292,6 +299,12 @@ export function SettingsPage() {
     setZernioError("");
     try {
       const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+      // Fetch connection status alongside accounts so the UI can show an honest
+      // configured / connected / analytics-add-on banner.
+      fetch(`${base}/api/zernio/status`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((s) => setZernioStatus(s))
+        .catch(() => setZernioStatus(null));
       const res = await fetch(`${base}/api/zernio/accounts`);
       if (!res.ok) {
         const j = await res.json().catch(() => ({})) as { error?: string };
@@ -459,6 +472,46 @@ export function SettingsPage() {
         {/* Zernio Sync Tab */}
         {tab === "zernio" && (
           <div className="space-y-4">
+            {zernioStatus && (
+              <div
+                className={`flex flex-wrap items-center gap-x-4 gap-y-1 text-xs px-4 py-3 rounded-lg border ${
+                  zernioStatus.connected
+                    ? "border-emerald-500/20 bg-emerald-500/5"
+                    : "border-border bg-muted/30"
+                }`}
+              >
+                <span className="flex items-center gap-1.5 font-medium">
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      zernioStatus.connected ? "bg-emerald-500" : "bg-muted-foreground/40"
+                    }`}
+                  />
+                  {zernioStatus.connected
+                    ? "Connected to Zernio"
+                    : zernioStatus.configured
+                      ? "Key configured · not reachable"
+                      : "No API key configured"}
+                </span>
+                {zernioStatus.connected && (
+                  <>
+                    <span className="text-muted-foreground">
+                      {zernioStatus.accountCount} accounts
+                    </span>
+                    <span
+                      className={
+                        zernioStatus.hasAnalyticsAccess
+                          ? "text-emerald-500"
+                          : "text-amber-500"
+                      }
+                    >
+                      {zernioStatus.hasAnalyticsAccess
+                        ? "Analytics add-on active"
+                        : "No analytics add-on (follower history unavailable)"}
+                    </span>
+                  </>
+                )}
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">
