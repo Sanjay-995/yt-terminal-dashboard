@@ -108,6 +108,66 @@ export function clearSeedChannels(): number {
   return before - channels.length;
 }
 
+export interface ZernioChannelInput {
+  zernioId: string;
+  platform: string;
+  name: string;
+  handle: string;
+  url: string;
+  avatarColor: string;
+  followers: number;
+}
+
+const bareHandle = (h: string) => h.replace(/^@/, "").toLowerCase();
+
+/**
+ * Add (or refresh) a channel sourced from a connected Zernio account —
+ * Instagram, or a YouTube channel not already tracked via direct OAuth.
+ *
+ * YouTube accounts that duplicate an OAuth-tracked channel (same handle) are
+ * skipped: the OAuth version carries richer Analytics (revenue, daily metrics),
+ * so we keep it rather than shadow it with a follower-only Zernio copy.
+ *
+ * Returns { added: true } when a NEW channel row was created (vs. refreshed/skipped).
+ */
+export function addOrUpdateZernioChannel(z: ZernioChannelInput): { added: boolean; skipped: boolean } {
+  if (z.platform === "youtube") {
+    const dup = channels.some(
+      (c) =>
+        c.platform === "youtube" &&
+        c.youtubeChannelId !== undefined &&
+        bareHandle(c.handle) === bareHandle(z.handle),
+    );
+    if (dup) return { added: false, skipped: true };
+  }
+
+  const id = `zernio_${z.zernioId}`;
+  const existing = channels.findIndex((c) => c.id === id);
+  const channel: Channel = {
+    id,
+    name: z.name,
+    handle: z.handle,
+    platform: z.platform,
+    url: z.url,
+    avatarColor: z.avatarColor,
+    subscribers: z.followers,
+    totalViews: 0,
+    totalVideos: 0,
+    totalWatchTimeHours: null,
+    avgViewsPerVideo: 0,
+    subscriberGrowth30d: null,
+    viewsGrowth30d: null,
+    engagementRate: null,
+  };
+
+  if (existing >= 0) {
+    channels[existing] = channel;
+    return { added: false, skipped: false };
+  }
+  channels.push(channel);
+  return { added: true, skipped: false };
+}
+
 // ─── Request validation ───────────────────────────────────────────────────────
 
 interface CreateChannelBody {

@@ -180,6 +180,13 @@ export function SettingsPage() {
     }
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Auto-load Zernio accounts + status when the Zernio tab is active
+  useEffect(() => {
+    if (tab === "zernio" && zernioAccounts === null && !zernioLoading) {
+      void loadZernioAccounts();
+    }
+  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function loadYtStatus() {
     setYtLoading(true);
     try {
@@ -354,10 +361,25 @@ export function SettingsPage() {
   }
 
   async function importAll() {
-    if (!zernioAccounts) return;
-    const toImport = zernioAccounts.filter((a) => !synced.has(a.id));
-    for (const account of toImport) {
-      await importZernioAccount(account);
+    setImportError("");
+    setZernioLoading(true);
+    try {
+      const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+      // Single server-side sync: imports every connected Zernio account
+      // (Instagram + non-duplicate YouTube), dedupes against OAuth channels,
+      // and persists the choice so cold restarts re-sync automatically.
+      const res = await fetch(`${base}/api/zernio/import-all`, { method: "POST" });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error ?? `HTTP ${res.status}`);
+      }
+      await queryClient.invalidateQueries({ queryKey: getGetChannelsQueryKey() });
+      if (zernioAccounts) setSynced(new Set(zernioAccounts.map((a) => a.id)));
+    } catch (e: unknown) {
+      const err = e as { message?: string };
+      setImportError(err.message ?? "Failed to sync Zernio channels");
+    } finally {
+      setZernioLoading(false);
     }
   }
 
@@ -515,14 +537,16 @@ export function SettingsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">
-                  Import your connected Zernio accounts directly into the dashboard.
+                  Sync all connected Zernio accounts into the dashboard. YouTube
+                  channels already tracked via OAuth are kept; Instagram and any
+                  new channels are added. Re-syncs automatically on restart.
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {zernioAccounts && zernioAccounts.some((a) => !synced.has(a.id)) && (
-                  <Button size="sm" variant="outline" onClick={importAll} className="h-8 text-xs gap-1.5">
+                {zernioAccounts && zernioAccounts.length > 0 && (
+                  <Button size="sm" variant="outline" onClick={importAll} disabled={zernioLoading} className="h-8 text-xs gap-1.5">
                     <Zap className="w-3.5 h-3.5" />
-                    Import All
+                    Sync All
                   </Button>
                 )}
                 <Button size="sm" onClick={loadZernioAccounts} disabled={zernioLoading} className="h-8 text-xs gap-1.5">

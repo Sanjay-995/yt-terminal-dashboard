@@ -1,6 +1,10 @@
 import { Router, type IRouter } from "express";
+import { addOrUpdateZernioChannel } from "./youtube";
+import { kvSet } from "../lib/kv-store";
 
 const router: IRouter = Router();
+
+export const KV_ZERNIO_SYNC = "zernio:sync_enabled";
 
 // Base host. The OpenAPI spec lists the production server as
 // https://zernio.com/api, so v1 endpoints live under https://zernio.com/api/v1.
@@ -12,7 +16,7 @@ function zernioHeaders() {
   return { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
 }
 
-function hasKey(): boolean {
+export function hasKey(): boolean {
   const key = process.env["ZERNIO_API_KEY"];
   return !!key && key !== "placeholder-not-used";
 }
@@ -146,6 +150,54 @@ router.get("/zernio/accounts", async (_req, res) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     res.status(502).json({ error: "Failed to reach Zernio API", detail: message });
+  }
+});
+
+// ─── Import all Zernio accounts as tracked channels ───────────────────────────
+// Pulls every connected Zernio account into the dashboard's channel list
+// (Instagram + any YouTube channel not already tracked via OAuth). Used by the
+// "Sync all" button and re-run on cold start so the channels persist.
+
+export async function syncAllZernioChannels(): Promise<{ added: number; refreshed: number; skipped: number; total: number }> {
+  const resp = await fetch(`${ZERNIO_BASE}/accounts`, { headers: zernioHeaders() });
+  if (!resp.ok) throw new Error(`Zernio accounts ${resp.status}`);
+  const data = (await resp.json()) as { accounts?: SocialAccount[] };
+  const accounts = data.accounts ?? [];
+
+  let added = 0;
+  let refreshed = 0;
+  let skipped = 0;
+  accounts.forEach((a, idx) => {
+    const r = addOrUpdateZernioChannel({
+      zernioId: a._id,
+      platform: a.platform,
+      name: displayName(a),
+      handle: handleOf(a),
+      url: a.profileUrl ?? "",
+      avatarColor: PLATFORM_COLORS[a.platform] ?? pickColor(idx),
+      followers: a.followersCount ?? 0,
+    });
+    if (r.skipped) skipped += 1;
+    else if (r.added) added += 1;
+    else refreshed += 1;
+  });
+
+  return { added, refreshed, skipped, total: accounts.length };
+}
+
+router.post("/zernio/import-all", async (_req, res) => {
+  if (!hasKey()) {
+    res.status(503).json({ error: "ZERNIO_API_KEY not configured" });
+    return;
+  }
+  try {
+    const result = await syncAllZernioChannels();
+    // Remember the choice so cold restarts re-sync automatically.
+    await kvSet(KV_ZERNIO_SYNC, true);
+    res.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    res.status(502).json({ error: "Failed to sync Zernio channels", detail: message });
   }
 });
 

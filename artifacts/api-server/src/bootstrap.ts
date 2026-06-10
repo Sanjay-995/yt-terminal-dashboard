@@ -5,6 +5,7 @@ import {
   getChannelByHandle,
 } from "./lib/youtube-client";
 import { addOrUpdateYouTubeChannel, clearSeedChannels } from "./routes/youtube";
+import { syncAllZernioChannels, hasKey, KV_ZERNIO_SYNC } from "./routes/zernio";
 import { kvGet, isPersistenceEnabled } from "./lib/kv-store";
 
 const KV_REFRESH_TOKEN = "youtube:refresh_token";
@@ -80,4 +81,19 @@ export async function bootstrapState(): Promise<void> {
   }
 
   logger.info({ imported, failed, total: handles.length }, "Channel auto-import complete");
+
+  // ─── Zernio channels ──────────────────────────────────────────────────────
+  // If the user has run "Sync all from Zernio", re-pull every connected Zernio
+  // account (Instagram + extra YouTube channels) so they survive cold restarts.
+  try {
+    const zernioEnabled = isPersistenceEnabled()
+      ? await kvGet<boolean>(KV_ZERNIO_SYNC)
+      : false;
+    if (zernioEnabled && hasKey()) {
+      const r = await syncAllZernioChannels();
+      logger.info(r, "Zernio channel auto-sync complete");
+    }
+  } catch (err) {
+    logger.warn({ err }, "Zernio auto-sync failed");
+  }
 }
