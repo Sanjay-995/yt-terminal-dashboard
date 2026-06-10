@@ -116,6 +116,10 @@ export interface ZernioChannelInput {
   url: string;
   avatarColor: string;
   followers: number;
+  // Optional real analytics pulled from Zernio (account-level, recent window).
+  totalViews?: number;
+  totalVideos?: number;
+  engagementRate?: number | null;
 }
 
 const bareHandle = (h: string) => h.replace(/^@/, "").toLowerCase();
@@ -143,6 +147,8 @@ export function addOrUpdateZernioChannel(z: ZernioChannelInput): { added: boolea
 
   const id = `zernio_${z.zernioId}`;
   const existing = channels.findIndex((c) => c.id === id);
+  const totalViews = z.totalViews ?? 0;
+  const totalVideos = z.totalVideos ?? 0;
   const channel: Channel = {
     id,
     name: z.name,
@@ -151,13 +157,13 @@ export function addOrUpdateZernioChannel(z: ZernioChannelInput): { added: boolea
     url: z.url,
     avatarColor: z.avatarColor,
     subscribers: z.followers,
-    totalViews: 0,
-    totalVideos: 0,
+    totalViews,
+    totalVideos,
     totalWatchTimeHours: null,
-    avgViewsPerVideo: 0,
+    avgViewsPerVideo: totalVideos > 0 ? Math.round(totalViews / totalVideos) : 0,
     subscriberGrowth30d: null,
     viewsGrowth30d: null,
-    engagementRate: null,
+    engagementRate: z.engagementRate ?? null,
   };
 
   if (existing >= 0) {

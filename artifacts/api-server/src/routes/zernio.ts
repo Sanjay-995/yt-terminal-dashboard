@@ -158,6 +158,66 @@ router.get("/zernio/accounts", async (_req, res) => {
 // (Instagram + any YouTube channel not already tracked via OAuth). Used by the
 // "Sync all" button and re-run on cold start so the channels persist.
 
+/**
+ * Pull account-level analytics for one connected account (recent `days` window).
+ * Returns real views/engagement/post-count so the channel shows numbers instead
+ * of empty states. Resilient: returns nulls on any failure.
+ */
+async function fetchAccountInsights(
+  account: SocialAccount,
+  days: number,
+): Promise<{ totalViews: number; totalVideos: number; engagementRate: number | null }> {
+  const until = new Date();
+  const since = new Date();
+  since.setDate(since.getDate() - days + 1);
+  const fmt = (d: Date) => d.toISOString().split("T")[0]!;
+  const out = { totalViews: 0, totalVideos: 0, engagementRate: null as number | null };
+
+  // Post count from profile metadata when present (Instagram media count).
+  const md = account.metadata as
+    | { profileData?: { extraData?: { mediaCount?: number } } }
+    | undefined;
+  if (md?.profileData?.extraData?.mediaCount) out.totalVideos = md.profileData.extraData.mediaCount;
+
+  try {
+    if (account.platform === "instagram") {
+      const p = new URLSearchParams({
+        accountId: account._id,
+        metricType: "total_value",
+        metrics: "reach,views,total_interactions,accounts_engaged",
+        since: fmt(since),
+        until: fmt(until),
+      });
+      const r = await fetch(`${ZERNIO_BASE}/analytics/instagram/account-insights?${p}`, { headers: zernioHeaders() });
+      if (r.ok) {
+        const j = (await r.json()) as { metrics?: Record<string, { total?: number }> };
+        const m = j.metrics ?? {};
+        out.totalViews = m["views"]?.total ?? m["reach"]?.total ?? 0;
+        const reach = m["reach"]?.total ?? 0;
+        const interactions = m["total_interactions"]?.total ?? 0;
+        out.engagementRate = reach > 0 ? Math.round((interactions / reach) * 1000) / 10 : null;
+      }
+    } else if (account.platform === "youtube") {
+      const p = new URLSearchParams({
+        accountId: account._id,
+        metricType: "total_value",
+        metrics: "views,estimatedMinutesWatched,subscribersGained",
+        since: fmt(since),
+        until: fmt(until),
+      });
+      const r = await fetch(`${ZERNIO_BASE}/analytics/youtube/channel-insights?${p}`, { headers: zernioHeaders() });
+      if (r.ok) {
+        const j = (await r.json()) as { metrics?: Record<string, { total?: number }> };
+        const m = j.metrics ?? {};
+        out.totalViews = m["views"]?.total ?? 0;
+      }
+    }
+  } catch {
+    // leave defaults
+  }
+  return out;
+}
+
 export async function syncAllZernioChannels(): Promise<{ added: number; refreshed: number; skipped: number; total: number }> {
   const resp = await fetch(`${ZERNIO_BASE}/accounts`, { headers: zernioHeaders() });
   if (!resp.ok) throw new Error(`Zernio accounts ${resp.status}`);
@@ -167,20 +227,28 @@ export async function syncAllZernioChannels(): Promise<{ added: number; refreshe
   let added = 0;
   let refreshed = 0;
   let skipped = 0;
-  accounts.forEach((a, idx) => {
-    const r = addOrUpdateZernioChannel({
-      zernioId: a._id,
-      platform: a.platform,
-      name: displayName(a),
-      handle: handleOf(a),
-      url: a.profileUrl ?? "",
-      avatarColor: PLATFORM_COLORS[a.platform] ?? pickColor(idx),
-      followers: a.followersCount ?? 0,
-    });
-    if (r.skipped) skipped += 1;
-    else if (r.added) added += 1;
-    else refreshed += 1;
-  });
+
+  // Enrich + upsert concurrently (bounded by the 20-account set).
+  await Promise.all(
+    accounts.map(async (a, idx) => {
+      const insights = await fetchAccountInsights(a, 30);
+      const r = addOrUpdateZernioChannel({
+        zernioId: a._id,
+        platform: a.platform,
+        name: displayName(a),
+        handle: handleOf(a),
+        url: a.profileUrl ?? "",
+        avatarColor: PLATFORM_COLORS[a.platform] ?? pickColor(idx),
+        followers: a.followersCount ?? 0,
+        totalViews: insights.totalViews,
+        totalVideos: insights.totalVideos,
+        engagementRate: insights.engagementRate,
+      });
+      if (r.skipped) skipped += 1;
+      else if (r.added) added += 1;
+      else refreshed += 1;
+    }),
+  );
 
   return { added, refreshed, skipped, total: accounts.length };
 }

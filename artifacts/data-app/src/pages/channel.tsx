@@ -368,7 +368,13 @@ export function ChannelPage() {
                     height={260}
                     icon={<Lock className="w-4 h-4" />}
                     message="No daily Analytics for this channel"
-                    hint="Connect this channel's brand account in Settings to see daily views, subs, watch time, and revenue."
+                    hint={
+                      activeChannel?.platform === "instagram"
+                        ? "Instagram exposes account totals (reach, views, engagement) but not a daily breakdown — see the KPI cards above and Content Performance on the Overview."
+                        : activeChannel?.platform && activeChannel.platform !== "youtube"
+                          ? `${activeChannel.platform} doesn't expose a daily Analytics timeline through Zernio. Account totals are shown in the KPI cards above.`
+                          : "Connect this channel's brand account in Settings to see daily views, subs, watch time, and revenue."
+                    }
                   />
                 ) : (
                   <ResponsiveContainer width="100%" height={260} debounce={0}>
