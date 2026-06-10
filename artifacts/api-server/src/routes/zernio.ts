@@ -371,7 +371,8 @@ router.get("/zernio/content", async (req, res) => {
     fromDate: fmt(from),
     toDate: fmt(to),
     limit: String(limit),
-    sortBy: "publishedAt",
+    sortBy: "date",
+    order: "desc",
   });
   if (platform) params.set("platform", platform);
 
