@@ -551,6 +551,99 @@ router.get("/zernio/content", async (req, res) => {
   }
 });
 
+// ─── Insights (analysis derived from Zernio data) ─────────────────────────────
+// Aggregates best-time, posting-cadence, and content-decay, and turns each into
+// a plain-English, actionable takeaway. This is the "analyze the data" layer.
+
+const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+interface BestTimeSlot { day_of_week: number; hour: number; avg_engagement: number; post_count: number }
+interface FrequencyRow { platform: string; posts_per_week: number; avg_engagement_rate: number; avg_engagement: number; weeks_count: number }
+interface DecayBucket { bucket_order: number; bucket_label: string; avg_pct_of_final: number; post_count: number }
+
+interface DerivedInsight {
+  kind: "timing" | "cadence" | "decay" | "volume" | "engagement";
+  title: string;
+  detail: string;
+}
+
+function fmtHour(h: number): string {
+  const period = h < 12 ? "am" : "pm";
+  const hr = h % 12 === 0 ? 12 : h % 12;
+  return `${hr}${period}`;
+}
+
+async function zfetch<T>(path: string): Promise<T | null> {
+  try {
+    const r = await fetch(`${ZERNIO_BASE}${path}`, { headers: zernioHeaders() });
+    if (!r.ok) return null;
+    return (await r.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+router.get("/zernio/insights", async (req, res) => {
+  if (!hasKey()) {
+    res.status(503).json({ error: "ZERNIO_API_KEY not configured" });
+    return;
+  }
+  const platform = req.query["platform"] ? `&platform=${String(req.query["platform"])}` : "";
+  const pq = platform ? `?${platform.slice(1)}` : "";
+
+  const [bt, pf, cd, overview] = await Promise.all([
+    zfetch<{ slots?: BestTimeSlot[] }>(`/analytics/best-time${pq}`),
+    zfetch<{ frequency?: FrequencyRow[] }>(`/analytics/posting-frequency${pq}`),
+    zfetch<{ buckets?: DecayBucket[] }>(`/analytics/content-decay${pq}`),
+    zfetch<{ overview?: { publishedPosts?: number } }>(`/analytics?limit=1${platform}`),
+  ]);
+
+  const slots = (bt?.slots ?? []).filter((s) => s.post_count > 0);
+  const frequency = (pf?.frequency ?? []).filter((f) => f.weeks_count > 0);
+  const buckets = (cd?.buckets ?? []).sort((a, b) => a.bucket_order - b.bucket_order);
+
+  const derived: DerivedInsight[] = [];
+
+  // Timing: best slot by avg engagement (require ≥1 post).
+  const topSlot = [...slots].sort((a, b) => b.avg_engagement - a.avg_engagement)[0];
+  if (topSlot) {
+    derived.push({
+      kind: "timing",
+      title: "Best time to post",
+      detail: `${DAY_NAMES[topSlot.day_of_week]} around ${fmtHour(topSlot.hour)} UTC drives the highest engagement (avg ${Math.round(topSlot.avg_engagement)} across ${topSlot.post_count} post${topSlot.post_count === 1 ? "" : "s"}).`,
+    });
+  }
+
+  // Cadence: posts/week with peak engagement rate, and the drop-off point.
+  if (frequency.length > 0) {
+    const best = [...frequency].sort((a, b) => b.avg_engagement_rate - a.avg_engagement_rate)[0]!;
+    const higher = frequency.filter((f) => f.posts_per_week > best.posts_per_week).sort((a, b) => a.posts_per_week - b.posts_per_week)[0];
+    let detail = `Engagement peaks at ~${best.posts_per_week} posts/week (${best.avg_engagement_rate.toFixed(1)}% engagement).`;
+    if (higher && higher.avg_engagement_rate < best.avg_engagement_rate * 0.7) {
+      detail += ` Pushing to ${higher.posts_per_week}/week drops it to ${higher.avg_engagement_rate.toFixed(1)}% — more isn't better.`;
+    }
+    derived.push({ kind: "cadence", title: "Optimal posting cadence", detail });
+  }
+
+  // Decay: when posts reach ~80% of their eventual engagement.
+  const matured = buckets.find((b) => b.avg_pct_of_final >= 80);
+  if (matured) {
+    derived.push({
+      kind: "decay",
+      title: "Content matures fast",
+      detail: `Posts reach ~${Math.round(matured.avg_pct_of_final)}% of their final engagement within ${matured.bucket_label.replace("h", " hours").replace("d", " days")}. The first hours matter most.`,
+    });
+  }
+
+  res.json({
+    bestTimes: slots,
+    cadence: frequency,
+    decay: buckets,
+    publishedPosts: overview?.overview?.publishedPosts ?? null,
+    derived,
+  });
+});
+
 // ─── Comments for a post ──────────────────────────────────────────────────────
 // Requires the platform-native post id + the Zernio account id (both surfaced
 // by /zernio/content on each post).

@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import { Layout } from "@/components/layout/Layout";
 import { OverviewPage } from "@/pages/overview";
+import { InsightsPage } from "@/pages/insights";
 import { ChannelPage } from "@/pages/channel";
 import { SettingsPage } from "@/pages/settings";
 import { LockScreen } from "@/pages/lock-screen";
@@ -31,6 +32,7 @@ function Router() {
     <Layout>
       <Switch>
         <Route path="/" component={OverviewPage} />
+        <Route path="/insights" component={InsightsPage} />
         <Route path="/channels" component={ChannelPage} />
         <Route path="/channels/:channelId" component={ChannelPage} />
         <Route path="/settings" component={SettingsPage} />

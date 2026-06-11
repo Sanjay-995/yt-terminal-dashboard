@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Activity,
   Settings,
+  Sparkles,
 } from "lucide-react";
 import { useGetChannels } from "@workspace/api-client-react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -47,6 +48,12 @@ export function Sidebar() {
               icon={<LayoutDashboard className="w-4 h-4" />}
               label="Overview"
               active={location === "/"}
+            />
+            <NavItem
+              href="/insights"
+              icon={<Sparkles className="w-4 h-4" />}
+              label="Insights"
+              active={location === "/insights"}
             />
           </div>
         </div>

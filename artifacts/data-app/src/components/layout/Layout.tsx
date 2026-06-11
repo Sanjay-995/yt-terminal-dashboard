@@ -8,6 +8,7 @@ import {
   Activity,
   LayoutDashboard,
   Settings,
+  Sparkles,
 } from "lucide-react";
 import { deriveAccent, formatCompact, isMissing } from "@/lib/formatters";
 
@@ -93,6 +94,18 @@ function MobileNav({ onClose }: { onClose: () => void }) {
           >
             <LayoutDashboard className="w-4 h-4" />
             <span>Overview</span>
+          </Link>
+          <Link
+            href="/insights"
+            onClick={onClose}
+            className={`flex items-center gap-2.5 px-2 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              location === "/insights"
+                ? "bg-primary/10 text-primary"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted"
+            }`}
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>Insights</span>
           </Link>
         </div>
 
