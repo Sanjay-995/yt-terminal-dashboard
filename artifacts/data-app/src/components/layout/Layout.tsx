@@ -9,6 +9,8 @@ import {
   LayoutDashboard,
   Settings,
   Sparkles,
+  Youtube,
+  Instagram,
 } from "lucide-react";
 import { deriveAccent, formatCompact, isMissing } from "@/lib/formatters";
 
@@ -158,6 +160,8 @@ function MobileNav({ onClose }: { onClose: () => void }) {
                     <span className="truncate flex-1 text-[13px] font-medium leading-tight">
                       {channel.name}
                     </span>
+                    {channel.platform === "youtube" && <Youtube className="w-3.5 h-3.5 text-[#FF0000] shrink-0" />}
+                    {channel.platform === "instagram" && <Instagram className="w-3.5 h-3.5 text-[#E1306C] shrink-0" />}
                     <span
                       className={`shrink-0 text-[10px] font-mono tabular-nums tracking-tight ${
                         active ? "text-primary/70" : "text-muted-foreground/70"

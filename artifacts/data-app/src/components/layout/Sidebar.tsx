@@ -5,7 +5,16 @@ import {
   Activity,
   Settings,
   Sparkles,
+  Youtube,
+  Instagram,
 } from "lucide-react";
+
+/** Tiny platform glyph so same-name channels on different platforms are distinct. */
+function PlatformGlyph({ platform }: { platform?: string }) {
+  if (platform === "youtube") return <Youtube className="w-3.5 h-3.5 text-[#FF0000] shrink-0" />;
+  if (platform === "instagram") return <Instagram className="w-3.5 h-3.5 text-[#E1306C] shrink-0" />;
+  return null;
+}
 import { useGetChannels } from "@workspace/api-client-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { deriveAccent, formatCompact, isMissing } from "@/lib/formatters";
@@ -89,6 +98,7 @@ export function Sidebar() {
                     key={channel.id}
                     href={`/channels/${channel.id}`}
                     name={channel.name}
+                    platform={channel.platform}
                     accent={accent}
                     subscribers={subs}
                     hasData={hasData}
@@ -151,6 +161,7 @@ function NavItem({
 function ChannelNavItem({
   href,
   name,
+  platform,
   accent,
   subscribers,
   hasData,
@@ -158,6 +169,7 @@ function ChannelNavItem({
 }: {
   href: string;
   name: string;
+  platform?: string;
   accent: string;
   subscribers: number | null | undefined;
   hasData: boolean;
@@ -187,6 +199,7 @@ function ChannelNavItem({
       <span className="truncate flex-1 text-[13px] font-medium leading-tight">
         {name}
       </span>
+      <PlatformGlyph platform={platform} />
       <span
         className={`shrink-0 text-[10px] font-mono tabular-nums tracking-tight ${
           active ? "text-primary/70" : "text-muted-foreground/70"

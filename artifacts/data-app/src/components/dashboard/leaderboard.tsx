@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { Link } from "wouter";
+import { Youtube, Instagram } from "lucide-react";
 import {
   deriveAccent,
   formatCompact,
@@ -13,6 +14,7 @@ type Metric = "subscribers" | "totalViews" | "totalVideos";
 interface ChannelLite {
   id: string;
   name: string;
+  platform?: string;
   avatarColor: string;
   subscribers: Nullable<number>;
   totalViews: Nullable<number>;
@@ -123,8 +125,10 @@ export function Leaderboard({
               }`}
             >
               <div className="flex justify-between items-center text-[13px] mb-1">
-                <span className="font-medium text-foreground truncate group-hover:underline underline-offset-2">
-                  {channel.name}
+                <span className="font-medium text-foreground truncate group-hover:underline underline-offset-2 flex items-center gap-1.5 min-w-0">
+                  <span className="truncate">{channel.name}</span>
+                  {channel.platform === "youtube" && <Youtube className="w-3.5 h-3.5 text-[#FF0000] shrink-0" />}
+                  {channel.platform === "instagram" && <Instagram className="w-3.5 h-3.5 text-[#E1306C] shrink-0" />}
                 </span>
                 <span className="font-mono tabular-nums text-[11px] text-muted-foreground shrink-0 ml-2">
                   {missing ? (
