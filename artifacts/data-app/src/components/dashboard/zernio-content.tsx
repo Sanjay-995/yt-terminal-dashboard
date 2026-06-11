@@ -45,14 +45,23 @@ type SortKey = "views" | "likes" | "comments" | "engagementRate";
  * engagement (views, likes, comments, shares, engagement rate) — data the
  * YouTube-only dashboard never had. Self-hides when Zernio isn't available.
  */
-export function ZernioContentPanel({ days = 30 }: { days?: number }) {
+export function ZernioContentPanel({
+  days = 30,
+  platform,
+  className,
+}: {
+  days?: number;
+  platform?: string;
+  className?: string;
+}) {
   const [data, setData] = useState<ContentResponse | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "hidden">("loading");
   const [sort, setSort] = useState<SortKey>("views");
 
   useEffect(() => {
     const base = import.meta.env.BASE_URL.replace(/\/$/, "");
-    fetch(`${base}/api/zernio/content?days=${days}&limit=50`)
+    const pq = platform ? `&platform=${platform}` : "";
+    fetch(`${base}/api/zernio/content?days=${days}&limit=50${pq}`)
       .then(async (r) => {
         if (!r.ok) {
           setState("hidden");
@@ -69,7 +78,7 @@ export function ZernioContentPanel({ days = 30 }: { days?: number }) {
         setState("ready");
       })
       .catch(() => setState("hidden"));
-  }, [days]);
+  }, [days, platform]);
 
   const top = useMemo(() => {
     if (!data) return [];
@@ -80,7 +89,7 @@ export function ZernioContentPanel({ days = 30 }: { days?: number }) {
 
   if (state === "loading") {
     return (
-      <Card className="bg-card">
+      <Card className={`bg-card ${className ?? ""}`}>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Content Performance · Zernio</CardTitle>
         </CardHeader>
@@ -101,7 +110,7 @@ export function ZernioContentPanel({ days = 30 }: { days?: number }) {
   ];
 
   return (
-    <Card className="bg-card">
+    <Card className={`bg-card ${className ?? ""}`}>
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>

@@ -41,9 +41,25 @@ const PLATFORM_LABEL: Record<string, string> = {
  * Renders nothing (returns null) when Zernio isn't configured / reachable, so
  * the panel simply doesn't appear rather than showing a broken state.
  */
-export function ZernioGrowthPanel({ days = 30 }: { days?: number }) {
+export function ZernioGrowthPanel({
+  days = 30,
+  platform,
+  className,
+}: {
+  days?: number;
+  platform?: string;
+  className?: string;
+}) {
   const [data, setData] = useState<FollowerStatsResponse | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "hidden" | "addon">("loading");
+
+  // Accounts limited to the selected platform (or all when unset).
+  const accounts = useMemo(
+    () =>
+      (data?.accounts ?? []).filter((a) => !platform || a.platform === platform),
+    [data, platform],
+  );
+  const accountIds = useMemo(() => new Set(accounts.map((a) => a.id)), [accounts]);
 
   useEffect(() => {
     const base = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -71,11 +87,12 @@ export function ZernioGrowthPanel({ days = 30 }: { days?: number }) {
       .catch(() => setState("hidden"));
   }, [days]);
 
-  // Aggregate daily follower total across all accounts for the headline sparkline.
+  // Aggregate daily follower total across the (filtered) accounts.
   const aggregate = useMemo(() => {
     if (!data) return [];
     const byDate = new Map<string, number>();
-    for (const points of Object.values(data.series)) {
+    for (const [id, points] of Object.entries(data.series)) {
+      if (!accountIds.has(id)) continue;
       for (const p of points) {
         byDate.set(p.date, (byDate.get(p.date) ?? 0) + p.followers);
       }
@@ -83,21 +100,19 @@ export function ZernioGrowthPanel({ days = 30 }: { days?: number }) {
     return [...byDate.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, followers]) => ({ date, followers }));
-  }, [data]);
+  }, [data, accountIds]);
 
   // Rank by absolute growth, biggest movers first.
-  const ranked = useMemo(() => {
-    if (!data) return [];
-    return [...data.accounts].sort(
-      (a, b) => Math.abs(b.growth ?? 0) - Math.abs(a.growth ?? 0),
-    );
-  }, [data]);
+  const ranked = useMemo(
+    () => [...accounts].sort((a, b) => Math.abs(b.growth ?? 0) - Math.abs(a.growth ?? 0)),
+    [accounts],
+  );
 
   if (state === "hidden") return null;
 
   if (state === "addon") {
     return (
-      <Card className="bg-card">
+      <Card className={`bg-card ${className ?? ""}`}>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Follower Growth · Zernio</CardTitle>
         </CardHeader>
@@ -112,7 +127,7 @@ export function ZernioGrowthPanel({ days = 30 }: { days?: number }) {
 
   if (state === "loading") {
     return (
-      <Card className="bg-card">
+      <Card className={`bg-card ${className ?? ""}`}>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Follower Growth · Zernio</CardTitle>
         </CardHeader>
@@ -125,11 +140,14 @@ export function ZernioGrowthPanel({ days = 30 }: { days?: number }) {
     );
   }
 
+  // Nothing for this platform — let the parent layout collapse gracefully.
+  if (accounts.length === 0) return null;
+
   const totalFollowers = ranked.reduce((s, a) => s + (a.currentFollowers ?? 0), 0);
   const totalGrowth = ranked.reduce((s, a) => s + (a.growth ?? 0), 0);
 
   return (
-    <Card className="bg-card">
+    <Card className={`bg-card ${className ?? ""}`}>
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -138,7 +156,7 @@ export function ZernioGrowthPanel({ days = 30 }: { days?: number }) {
               Follower Growth · Zernio
             </CardTitle>
             <p className="text-xs text-muted-foreground mt-1">
-              All {ranked.length} connected accounts · last {data?.days ?? days} days
+              {ranked.length} {platform ?? "connected"} account{ranked.length === 1 ? "" : "s"} · last {data?.days ?? days} days
             </p>
           </div>
           <div className="text-right">

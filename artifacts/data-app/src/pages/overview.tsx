@@ -20,10 +20,19 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { KPICard } from "@/components/dashboard/kpi-card";
 import { Leaderboard } from "@/components/dashboard/leaderboard";
 import { ZernioGrowthPanel } from "@/components/dashboard/zernio-growth";
 import { ZernioContentPanel } from "@/components/dashboard/zernio-content";
+
+type PlatformFilter = "all" | "youtube" | "instagram";
 import {
   DarkModeToggle,
   ExportPdfButton,
@@ -83,8 +92,34 @@ export function OverviewPage() {
   const gridColor = isDark ? "rgba(255,255,255,0.06)" : "#e5e5e5";
   const tickColor = isDark ? "#88888b" : "#71717a";
 
-  const channels = channelsQuery.data ?? [];
+  const allChannels = channelsQuery.data ?? [];
+  const [platformFilter, setPlatformFilter] = useState<PlatformFilter>("all");
+  const channels = useMemo(
+    () =>
+      platformFilter === "all"
+        ? allChannels
+        : allChannels.filter((c) => c.platform === platformFilter),
+    [allChannels, platformFilter],
+  );
   const channelCount = channels.length;
+  const isInstagramView = platformFilter === "instagram";
+  const platformParam = platformFilter === "all" ? undefined : platformFilter;
+
+  // Instagram-specific aggregates computed from the (Zernio-enriched) channels,
+  // used when the Instagram view is selected (YouTube Analytics KPIs don't apply).
+  const igAgg = useMemo(() => {
+    const followers = channels.reduce((s, c) => s + (c.subscribers ?? 0), 0);
+    const views = channels.reduce((s, c) => s + (c.totalViews ?? 0), 0);
+    const posts = channels.reduce((s, c) => s + (c.totalVideos ?? 0), 0);
+    const engRates = channels
+      .map((c) => c.engagementRate)
+      .filter((r): r is number => r !== null && r !== undefined);
+    const avgEng =
+      engRates.length > 0
+        ? Math.round((engRates.reduce((s, r) => s + r, 0) / engRates.length) * 10) / 10
+        : null;
+    return { followers, views, posts, avgEng };
+  }, [channels]);
 
   // Channels for which the OAuth account owns the underlying YouTube channel
   // and we therefore have Analytics API access (revenue, watch time, daily
@@ -154,6 +189,19 @@ export function OverviewPage() {
             <LastRefreshed updatedAt={overviewQuery.dataUpdatedAt} />
           </div>
           <div className="flex items-center gap-2 print:hidden">
+            <Select
+              value={platformFilter}
+              onValueChange={(v) => setPlatformFilter(v as PlatformFilter)}
+            >
+              <SelectTrigger className="h-9 w-[150px] text-sm">
+                <SelectValue placeholder="Platform" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All platforms</SelectItem>
+                <SelectItem value="youtube">YouTube</SelectItem>
+                <SelectItem value="instagram">Instagram</SelectItem>
+              </SelectContent>
+            </Select>
             <SplitRefreshButton
               isDark={isDark}
               loading={isInitialLoading || isBusy}
@@ -181,68 +229,90 @@ export function OverviewPage() {
           </div>
         )}
 
-        {/* KPIs — total subs leads (always real), Analytics-derived metrics
-            follow with explicit provenance dots. */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-          <KPICard
-            title="Total Subs"
-            value={
-              overview ? formatCompact(overview.totalSubscribers) : "--"
-            }
-            change={overview?.subscriberGrowth30d}
-            tone="primary"
-            provenance={subsAreReal ? "public" : "unavailable"}
-            hint="Sum across all tracked channels"
-            loading={isInitialLoading}
-          />
-          <KPICard
-            title="30d Views"
-            value={overview ? formatCompact(overview.totalViews30d) : "--"}
-            change={overview?.viewsGrowth30d}
-            provenance={
-              connectedChannels.length > 0 ? "live" : "unavailable"
-            }
-            hint={aggregateHint}
-            loading={isInitialLoading}
-          />
-          <KPICard
-            title="30d Watch Hrs"
-            value={
-              overview ? formatCompact(overview.totalWatchTimeHours30d) : "--"
-            }
-            provenance={
-              connectedChannels.length > 0 ? "live" : "unavailable"
-            }
-            hint={aggregateHint}
-            loading={isInitialLoading}
-          />
-          <KPICard
-            title="30d Revenue"
-            value={
-              overview ? formatCurrency(overview.totalEstimatedRevenue30d) : "--"
-            }
-            change={overview?.revenueGrowth30d}
-            provenance={
-              connectedChannels.length > 0 ? "live" : "unavailable"
-            }
-            hint={aggregateHint}
-            loading={isInitialLoading}
-          />
-          <KPICard
-            title="Avg Engagement"
-            value={
-              overview ? formatPercent(overview.avgEngagementRate) : "--"
-            }
-            provenance={
-              connectedChannels.length > 0 ? "live" : "unavailable"
-            }
-            hint={aggregateHint}
-            loading={isInitialLoading}
-          />
-        </div>
+        {/* KPIs — platform-aware. Instagram view shows Zernio-derived account
+            totals; YouTube/All shows the YouTube Analytics aggregates. */}
+        {isInstagramView ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <KPICard
+              title="Total Followers"
+              value={formatCompact(igAgg.followers)}
+              tone="primary"
+              provenance="public"
+              hint="Sum across Instagram accounts"
+              loading={isInitialLoading}
+            />
+            <KPICard
+              title="30d Views"
+              value={igAgg.views > 0 ? formatCompact(igAgg.views) : "--"}
+              provenance={igAgg.views > 0 ? "live" : "unavailable"}
+              hint="Instagram account views (Zernio)"
+              loading={isInitialLoading}
+            />
+            <KPICard
+              title="Avg Engagement"
+              value={formatPercent(igAgg.avgEng)}
+              provenance={igAgg.avgEng !== null ? "live" : "unavailable"}
+              hint="Interactions ÷ reach, per account"
+              loading={isInitialLoading}
+            />
+            <KPICard
+              title="Total Posts"
+              value={igAgg.posts > 0 ? formatCompact(igAgg.posts) : "--"}
+              provenance={igAgg.posts > 0 ? "public" : "unavailable"}
+              hint={`${channelCount} Instagram accounts`}
+              loading={isInitialLoading}
+            />
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            <KPICard
+              title="Total Subs"
+              value={overview ? formatCompact(overview.totalSubscribers) : "--"}
+              change={overview?.subscriberGrowth30d}
+              tone="primary"
+              provenance={subsAreReal ? "public" : "unavailable"}
+              hint="Sum across all tracked channels"
+              loading={isInitialLoading}
+            />
+            <KPICard
+              title="30d Views"
+              value={overview ? formatCompact(overview.totalViews30d) : "--"}
+              change={overview?.viewsGrowth30d}
+              provenance={connectedChannels.length > 0 ? "live" : "unavailable"}
+              hint={aggregateHint}
+              loading={isInitialLoading}
+            />
+            <KPICard
+              title="30d Watch Hrs"
+              value={overview ? formatCompact(overview.totalWatchTimeHours30d) : "--"}
+              provenance={connectedChannels.length > 0 ? "live" : "unavailable"}
+              hint={aggregateHint}
+              loading={isInitialLoading}
+            />
+            <KPICard
+              title="30d Revenue"
+              value={overview ? formatCurrency(overview.totalEstimatedRevenue30d) : "--"}
+              change={overview?.revenueGrowth30d}
+              provenance={connectedChannels.length > 0 ? "live" : "unavailable"}
+              hint={aggregateHint}
+              loading={isInitialLoading}
+            />
+            <KPICard
+              title="Avg Engagement"
+              value={overview ? formatPercent(overview.avgEngagementRate) : "--"}
+              provenance={connectedChannels.length > 0 ? "live" : "unavailable"}
+              hint={aggregateHint}
+              loading={isInitialLoading}
+            />
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main Chart */}
+          {/* Main Chart — Instagram view swaps in Zernio follower growth, since
+              YouTube daily Analytics don't apply to Instagram accounts. */}
+          {isInstagramView ? (
+            <ZernioGrowthPanel platform="instagram" days={30} className="lg:col-span-2" />
+          ) : (
           <Card className="lg:col-span-2 shadcn-card bg-card">
             <CardHeader className="px-5 pt-5 pb-2 flex-row items-start justify-between space-y-0 gap-3">
               <div className="min-w-0">
@@ -441,6 +511,7 @@ export function OverviewPage() {
               />}
             </CardContent>
           </Card>
+          )}
 
           {/* Channel Leaderboard */}
           <div className="space-y-6">
@@ -472,11 +543,17 @@ export function OverviewPage() {
         </div>
 
         {/* Zernio enrichment — each panel self-hides when Zernio is
-            unconfigured/unreachable, so they never break the YouTube view. */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <ZernioGrowthPanel days={30} />
-          <ZernioContentPanel days={30} />
-        </div>
+            unconfigured/unreachable, so they never break the YouTube view.
+            In the Instagram view the growth panel is already shown up top, so
+            only Content Performance appears here (full width). */}
+        {isInstagramView ? (
+          <ZernioContentPanel days={30} platform="instagram" />
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <ZernioGrowthPanel days={30} platform={platformParam} />
+            <ZernioContentPanel days={30} platform={platformParam} />
+          </div>
+        )}
       </div>
     </div>
   );
