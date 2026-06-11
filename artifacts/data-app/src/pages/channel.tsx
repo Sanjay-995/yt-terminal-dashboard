@@ -171,6 +171,49 @@ export function ChannelPage() {
     [metricsData],
   );
 
+  // Zernio-imported channels (Instagram + extra YouTube) have no YouTube
+  // Analytics, but Zernio DOES expose a daily follower history. Use it to fill
+  // the daily charts + subs-gained KPI with real data.
+  const isZernioChannel = !!channelId && channelId.startsWith("zernio_");
+  const [zernioSeries, setZernioSeries] = useState<{ date: string; followers: number }[]>([]);
+  const [zernioGrowth, setZernioGrowth] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!isZernioChannel || !channelId) {
+      setZernioSeries([]);
+      setZernioGrowth(null);
+      return;
+    }
+    const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+    fetch(`${base}/api/zernio/follower-stats?days=${days ?? 30}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        setZernioSeries(d.series?.[channelId] ?? []);
+        const acct = (d.accounts ?? []).find(
+          (a: { id: string; growth: number | null }) => a.id === channelId,
+        );
+        setZernioGrowth(acct?.growth ?? null);
+      })
+      .catch(() => {});
+  }, [isZernioChannel, channelId, days]);
+
+  // Daily follower count + day-over-day gains.
+  const followerDaily = useMemo(
+    () =>
+      zernioSeries.map((p, i) => ({
+        date: p.date,
+        followers: p.followers,
+        gained: i === 0 ? 0 : p.followers - zernioSeries[i - 1]!.followers,
+      })),
+    [zernioSeries],
+  );
+  const hasFollowerSeries = followerDaily.length >= 2;
+
+  // Subs-gained for the period: Zernio growth for imported channels, else the
+  // YouTube Analytics sum.
+  const effectiveSubsGained = isZernioChannel ? zernioGrowth : totalSubsGainedForPeriod;
+
   // Distinguish "has revenue data" from "has zero revenue across the period".
   const hasRevenueSignal = useMemo(
     () =>
@@ -314,9 +357,11 @@ export function ChannelPage() {
               loading={isInitialLoading}
             />
             <KPICard
-              title={`${days || 30}d Subs Gained`}
-              value={formatCompact(totalSubsGainedForPeriod)}
-              provenance={hasTimeSeries ? "live" : "unavailable"}
+              title={isZernioChannel ? `${days || 30}d Followers Gained` : `${days || 30}d Subs Gained`}
+              value={formatCompact(effectiveSubsGained)}
+              provenance={
+                hasTimeSeries || effectiveSubsGained !== null ? "live" : "unavailable"
+              }
               loading={isInitialLoading}
             />
             <KPICard
@@ -351,7 +396,7 @@ export function ChannelPage() {
             <Card className="shadcn-card bg-card lg:col-span-2">
               <CardHeader className="px-5 pt-5 pb-2 flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-[15px] font-semibold tracking-tight">
-                  Daily Views
+                  {!hasTimeSeries && hasFollowerSeries ? "Followers Over Time" : "Daily Views"}
                 </CardTitle>
                 {!isInitialLoading && hasTimeSeries && (
                   <CSVLink
@@ -367,6 +412,50 @@ export function ChannelPage() {
               <CardContent className="p-5 pt-2">
                 {isInitialLoading ? (
                   <Skeleton className="w-full h-[260px]" />
+                ) : !hasTimeSeries && hasFollowerSeries ? (
+                  <ResponsiveContainer width="100%" height={260} debounce={0}>
+                    <AreaChart data={followerDaily}>
+                      <defs>
+                        <linearGradient id="gradientFollowers" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={accent} stopOpacity={0.4} />
+                          <stop offset="100%" stopColor={accent} stopOpacity={0.01} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+                      <XAxis
+                        dataKey="date"
+                        tickFormatter={(d) => formatDate(d)}
+                        tick={{ fontSize: 11, fill: tickColor }}
+                        stroke={tickColor}
+                        tickMargin={8}
+                        minTickGap={20}
+                      />
+                      <YAxis
+                        tickFormatter={formatCompact}
+                        tick={{ fontSize: 11, fill: tickColor }}
+                        stroke={tickColor}
+                        tickMargin={8}
+                        width={45}
+                        domain={["dataMin", "dataMax"]}
+                      />
+                      <Tooltip
+                        content={<CustomTooltip />}
+                        isAnimationActive={false}
+                        cursor={{ fill: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)", stroke: "none" }}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="followers"
+                        name="Followers"
+                        fill="url(#gradientFollowers)"
+                        stroke={accent}
+                        fillOpacity={1}
+                        strokeWidth={2}
+                        isAnimationActive={false}
+                        activeDot={{ r: 4, strokeWidth: 0, fill: accent }}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
                 ) : !hasTimeSeries ? (
                   <ChartEmptyState
                     height={260}
@@ -374,7 +463,7 @@ export function ChannelPage() {
                     message="No daily Analytics for this channel"
                     hint={
                       activeChannel?.platform === "instagram"
-                        ? "Instagram exposes account totals (reach, views, engagement) but not a daily breakdown — see the KPI cards above and Content Performance on the Overview."
+                        ? "Instagram exposes account totals (reach, views, engagement) but not daily views — the follower trend above and Content Performance on the Overview show what's available."
                         : activeChannel?.platform && activeChannel.platform !== "youtube"
                           ? `${activeChannel.platform} doesn't expose a daily Analytics timeline through Zernio. Account totals are shown in the KPI cards above.`
                           : "Connect this channel's brand account in Settings to see daily views, subs, watch time, and revenue."
@@ -451,7 +540,7 @@ export function ChannelPage() {
               <Card className="shadcn-card bg-card flex-1">
                 <CardHeader className="px-5 pt-5 pb-2 flex-row items-center justify-between space-y-0">
                   <CardTitle className="text-sm font-semibold tracking-tight">
-                    Daily Subs Gained
+                    {isZernioChannel ? "Daily Followers Gained" : "Daily Subs Gained"}
                   </CardTitle>
                   {!isInitialLoading && hasTimeSeries && (
                     <CSVLink
@@ -467,6 +556,34 @@ export function ChannelPage() {
                 <CardContent className="p-5 pt-2">
                   {isInitialLoading ? (
                     <Skeleton className="w-full h-[120px]" />
+                  ) : !hasTimeSeries && hasFollowerSeries ? (
+                    <ResponsiveContainer width="100%" height={120} debounce={0}>
+                      <BarChart data={followerDaily}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+                        <XAxis
+                          dataKey="date"
+                          tickFormatter={(d) => formatDate(d, "MMM d")}
+                          tick={{ fontSize: 10, fill: tickColor }}
+                          stroke={tickColor}
+                          tickMargin={8}
+                          minTickGap={20}
+                        />
+                        <YAxis
+                          tickFormatter={formatCompact}
+                          tick={{ fontSize: 10, fill: tickColor }}
+                          stroke={tickColor}
+                          tickMargin={8}
+                          width={35}
+                          allowDecimals={false}
+                        />
+                        <Tooltip
+                          content={<CustomTooltip />}
+                          isAnimationActive={false}
+                          cursor={{ fill: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)" }}
+                        />
+                        <Bar dataKey="gained" name="Followers" fill={CHART_COLORS.purple} radius={[2, 2, 0, 0]} isAnimationActive={false} />
+                      </BarChart>
+                    </ResponsiveContainer>
                   ) : !hasTimeSeries ? (
                     <ChartEmptyState height={120} compact message="—" />
                   ) : (
